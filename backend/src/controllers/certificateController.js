@@ -89,18 +89,54 @@ const downloadCertificate = async (req, res, next) => {
 const verifyCertificate = async (req, res, next) => {
   try {
     const { certificateNumber } = req.params;
+    const queryText = (certificateNumber || '').trim();
 
-    const certificate = await Certificate.findOne({
-      certificateNumber: certificateNumber.trim().toUpperCase(),
+    // 1. Search by Certificate Number
+    let certificate = await Certificate.findOne({
+      certificateNumber: { $regex: new RegExp(`^${queryText}$`, 'i') },
     })
       .populate('instrument', 'instrumentType manufacturer model serialNumber capacity unit')
       .populate('business', 'businessName businessType district state')
       .populate('issuedBy', 'name');
 
+    // 2. Fallback: Search by Instrument Serial Number
+    if (!certificate) {
+      const instrument = await Instrument.findOne({
+        serialNumber: { $regex: new RegExp(`^${queryText}$`, 'i') },
+      });
+
+      if (instrument) {
+        certificate = await Certificate.findOne({
+          instrument: instrument._id,
+        })
+          .populate('instrument', 'instrumentType manufacturer model serialNumber capacity unit')
+          .populate('business', 'businessName businessType district state')
+          .populate('issuedBy', 'name')
+          .sort({ issueDate: -1 });
+      }
+    }
+
+    // 3. Fallback: Search by Application Number
+    if (!certificate) {
+      const application = await Application.findOne({
+        applicationNumber: { $regex: new RegExp(`^${queryText}$`, 'i') },
+      });
+
+      if (application) {
+        certificate = await Certificate.findOne({
+          application: application._id,
+        })
+          .populate('instrument', 'instrumentType manufacturer model serialNumber capacity unit')
+          .populate('business', 'businessName businessType district state')
+          .populate('issuedBy', 'name')
+          .sort({ issueDate: -1 });
+      }
+    }
+
     if (!certificate) {
       return ApiResponse.error(
         res,
-        'Certificate not found. The provided reference does not match any official Legal Metrology record.',
+        `Certificate not found. The reference '${queryText}' does not match any certificate number, stamped serial number, or application ID.`,
         404
       );
     }
