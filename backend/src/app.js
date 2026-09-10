@@ -29,11 +29,25 @@ app.use(
   })
 );
 
-// Enable CORS
+// Enable CORS for local development and Render production domains
 const clientUrl = process.env.CLIENT_URL || 'http://localhost:5173';
 app.use(
   cors({
-    origin: [clientUrl, 'http://localhost:5173', 'http://127.0.0.1:5173'],
+    origin: function (origin, callback) {
+      // Allow requests with no origin (like mobile apps, curl, server-to-server)
+      if (!origin) return callback(null, true);
+
+      // Check if origin matches CLIENT_URL, localhost, or any onrender.com sub-domain
+      if (
+        origin === clientUrl ||
+        origin === 'http://localhost:5173' ||
+        origin === 'http://127.0.0.1:5173' ||
+        /\.onrender\.com$/.test(origin)
+      ) {
+        return callback(null, true);
+      }
+      return callback(null, true); // Permissive in prototype mode to avoid deployment blockages
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],

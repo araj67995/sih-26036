@@ -1,0 +1,42 @@
+services:
+  # ----------------------------------------------------
+  # 1. Backend Node.js Web Service (API)
+  # ----------------------------------------------------
+  - type: web
+    name: sih-26036-backend
+    runtime: node
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: node src/server.js
+    plan: free
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MONGO_URI
+        value: mongodb+srv://sih:sih@cluster1.seew8.mongodb.net/legal_metrology_db?retryWrites=true&w=majority
+      - key: JWT_SECRET
+        value: supersecret_legal_metrology_jwt_key_2026
+      - key: JWT_EXPIRE
+        value: 7d
+      - key: CLIENT_URL
+        value: https://sih-26036-frontend.onrender.com
+
+  # ----------------------------------------------------
+  # 2. Frontend React / Vite Static Site
+  # ----------------------------------------------------
+  - type: static
+    name: sih-26036-frontend
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    plan: free
+    routes:
+      # React Router SPA Rewrite Rule
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_URL
+        value: https://sih-26036-backend.onrender.com/api
