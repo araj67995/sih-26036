@@ -53,14 +53,29 @@
 | **Officer 2** | `officer2@metrology.gov.in` | `Officer@123` | Inspector Ananya Sen |
 | **Admin** | `admin@metrology.gov.in` | `Admin@123` | Dr. K. S. Verma (Analytics, Allocation, Audit Logs, Users) |
 
-Sample Verified Certificate Numbers for Public Verification:
-- `LM-DL-2026-000001`
-- `LM-DL-2026-000002`
-- `LM-DL-2026-000003`
+Sample Verified Certificate Numbers / Serial Numbers for Public Verification:
+- Certificate Numbers: `LM-DL-2026-000001`, `LM-DL-2026-000002`, `LM-DE-2026-000005`
+- Stamped Serial Numbers: `SN-2026-DEL-0091`, `SN-TEST-E2E-27032`
+- Application Numbers: `APP-2026-00001`, `APP-2026-18205`
 
 ---
 
-## ⚙️ Running the Application
+## 🚀 Live Cloud Deployment (Render.com)
+
+The repository includes a ready-to-use [`render.yaml`](./render.yaml) blueprint:
+
+1. **Backend Web Service:**
+   - **Build Command:** `cd backend && npm install`
+   - **Start Command:** `cd backend && node src/server.js`
+   - **Environment Variables:** `MONGODB_URI`, `JWT_SECRET`, `NODE_ENV=production`, `CLIENT_URL`
+2. **Frontend Static Site:**
+   - **Build Command:** `cd frontend && npm install && npm run build`
+   - **Publish Directory:** `frontend/dist`
+   - **Environment Variables:** `VITE_API_URL=https://<your-backend-service>.onrender.com/api`
+
+---
+
+## ⚙️ Running Locally
 
 ### 1. Backend Server
 ```bash
@@ -78,15 +93,16 @@ npm run dev
 ```
 Frontend runs on `http://localhost:5173`.
 
-### 3. Re-seeding Database (Optional)
+### 3. Running Automated End-to-End Verification Test
+```bash
+cd backend
+node src/scripts/verifyE2E.js
+```
+
+### 4. Re-seeding Database (Optional)
 To reset and re-populate the MongoDB database with demo data:
 ```bash
 cd backend
 node src/scripts/seed.js
 ```
 
-### 4. Running Automated End-to-End Verification Test
-```bash
-cd backend
-node src/scripts/verifyE2E.js
-```
