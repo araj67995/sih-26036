@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+*/node_modules/
+
+# Production build output
+dist/
+*/dist/
+build/
+
+# Environment variables (keep secrets safe)
+.env
+*/.env
+!.env.example
+!*/.env.example
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Uploaded dynamic assets in runtime (keep directory structures)
+backend/src/uploads/documents/*
+!backend/src/uploads/documents/.gitkeep
+backend/src/uploads/certificates/*
+!backend/src/uploads/certificates/.gitkeep
+backend/src/uploads/evidence/*
+!backend/src/uploads/evidence/.gitkeep

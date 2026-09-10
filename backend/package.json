@@ -1,0 +1,41 @@
+{
+  "name": "legal-metrology-backend",
+  "version": "1.0.0",
+  "description": "Backend API for Online Verification System for Weighing and Measuring Instruments (SIH 26036)",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "legal-metrology",
+    "weighing-instruments",
+    "verification",
+    "sih26036",
+    "express",
+    "mongodb"
+  ],
+  "author": "SIH Team",
+  "license": "ISC",
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cloudinary": "^1.41.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-rate-limit": "^7.2.0",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.3.1",
+    "morgan": "^1.10.0",
+    "multer": "^1.4.5-lts.1",
+    "nodemailer": "^6.9.13",
+    "pdfkit": "^0.15.0",
+    "qrcode": "^1.5.3"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  }
+}
