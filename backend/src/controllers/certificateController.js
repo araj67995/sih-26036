@@ -1,6 +1,7 @@
 const path = require('path');
 const fs = require('fs');
-const { Certificate, Application, Business, Instrument } = require('../models');
+const mongoose = require('mongoose');
+const { Certificate, Application, Business, Instrument, Inspection } = require('../models');
 const ApiResponse = require('../utils/apiResponse');
 const { logAction } = require('../services/auditService');
 const { generateCertificatePDF } = require('../services/pdfService');
@@ -58,23 +59,82 @@ const getCertificateById = async (req, res, next) => {
 };
 
 /**
- * @desc   Download certificate PDF file
+ * @desc   Download certificate PDF file (Regenerates automatically if missing on disk)
  * @route  GET /api/certificates/:id/download
  * @access Public / Private
  */
 const downloadCertificate = async (req, res, next) => {
   try {
-    const certificate = await Certificate.findById(req.params.id);
+    const { id } = req.params;
+    let certificate = null;
+
+    if (mongoose.Types.ObjectId.isValid(id)) {
+      certificate = await Certificate.findById(id)
+        .populate('instrument')
+        .populate('business')
+        .populate('application')
+        .populate('issuedBy', 'name email');
+    }
+
+    if (!certificate) {
+      certificate = await Certificate.findOne({ certificateNumber: id })
+        .populate('instrument')
+        .populate('business')
+        .populate('application')
+        .populate('issuedBy', 'name email');
+    }
+
     if (!certificate) {
       return ApiResponse.error(res, 'Certificate not found', 404);
     }
 
-    const filePath = path.join(__dirname, '..', certificate.pdfUrl);
+    const certsDir = path.join(__dirname, '..', 'uploads', 'certificates');
+    if (!fs.existsSync(certsDir)) {
+      fs.mkdirSync(certsDir, { recursive: true });
+    }
+
+    const fileName = `Certificate-${certificate.certificateNumber}.pdf`;
+    const filePath = path.join(certsDir, fileName);
+
+    // If PDF file does not exist on disk, regenerate dynamically on the fly
+    if (!fs.existsSync(filePath)) {
+      const inspection = await Inspection.findOne({
+        application: certificate.application?._id || certificate.application,
+      });
+
+      const clientUrl = process.env.CLIENT_URL || req.headers.origin || 'http://localhost:5173';
+
+      await generateCertificatePDF({
+        certificateNumber: certificate.certificateNumber,
+        businessName: certificate.business?.businessName || 'Verified Commercial Establishment',
+        businessAddress: certificate.business
+          ? `${certificate.business.address || ''}, ${certificate.business.district || ''}, ${certificate.business.state || ''}`.trim()
+          : 'Official Registered Premises',
+        instrumentType: certificate.instrument?.instrumentType || 'Weighing Instrument',
+        manufacturer: certificate.instrument?.manufacturer || 'Standard Manufacturer',
+        model: certificate.instrument?.model || 'Standard Model',
+        serialNumber: certificate.instrument?.serialNumber || 'N/A',
+        capacity: certificate.instrument?.capacity || 0,
+        unit: certificate.instrument?.unit || 'kg',
+        standardWeight: inspection?.standardWeight,
+        observedReading: inspection?.observedReading,
+        error: inspection?.error !== undefined ? inspection.error : 0,
+        issueDate: certificate.issueDate,
+        validUntil: certificate.validUntil,
+        officerName: certificate.issuedBy?.name || 'Legal Metrology Inspector',
+        verificationToken: certificate.verificationToken,
+        clientUrl,
+      });
+
+      // Ensure certificate record has the canonical relative path
+      certificate.pdfUrl = `/uploads/certificates/${fileName}`;
+      await certificate.save();
+    }
 
     if (fs.existsSync(filePath)) {
       return res.download(filePath, `LegalMetrology-Certificate-${certificate.certificateNumber}.pdf`);
     } else {
-      return ApiResponse.error(res, 'Certificate PDF file is missing on the server', 404);
+      return ApiResponse.error(res, 'Unable to generate or retrieve certificate PDF', 500);
     }
   } catch (error) {
     next(error);

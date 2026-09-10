@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import api from '../services/api';
+import api, { getFileDownloadUrl } from '../services/api';
 
 const PublicCertificateVerification = () => {
   const { certificateNumber } = useParams();
@@ -242,7 +242,7 @@ const PublicCertificateVerification = () => {
                         </div>
                         {certificateData.pdfDownloadUrl && (
                           <a
-                            href={`http://localhost:5000${certificateData.pdfDownloadUrl}`}
+                            href={getFileDownloadUrl(certificateData.pdfDownloadUrl)}
                             target="_blank"
                             rel="noreferrer"
                             className="btn btn-outline-success btn-sm"

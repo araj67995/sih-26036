@@ -56,4 +56,19 @@ export const checkSystemHealth = async () => {
   return await api.get('/health');
 };
 
+// Helper to get full download URL for files, accounting for local proxy and production Render URL
+export const getFileDownloadUrl = (pathOrUrl) => {
+  if (!pathOrUrl) return '';
+  if (pathOrUrl.startsWith('http://') || pathOrUrl.startsWith('https://')) {
+    return pathOrUrl;
+  }
+  const apiBase = import.meta.env.VITE_API_URL || '';
+  if (apiBase && apiBase.startsWith('http')) {
+    const origin = apiBase.replace(/\/api\/?$/, '');
+    return `${origin}${pathOrUrl.startsWith('/') ? '' : '/'}${pathOrUrl}`;
+  }
+  return pathOrUrl.startsWith('/') ? pathOrUrl : `/${pathOrUrl}`;
+};
+
 export default api;
+

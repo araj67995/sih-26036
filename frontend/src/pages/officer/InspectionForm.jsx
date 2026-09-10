@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import api from '../../services/api';
+import api, { getFileDownloadUrl } from '../../services/api';
 import StatusBadge from '../../components/StatusBadge';
 
 const InspectionForm = () => {
@@ -168,7 +168,7 @@ const InspectionForm = () => {
                 <i className="bi bi-qr-code-scan me-1"></i> Public Verification
               </Link>
               <a
-                href={`http://localhost:5000/api/certificates/${issuedCertificate._id}/download`}
+                href={getFileDownloadUrl(`/api/certificates/${issuedCertificate._id}/download`)}
                 target="_blank"
                 rel="noreferrer"
                 className="btn btn-success btn-sm fw-bold"

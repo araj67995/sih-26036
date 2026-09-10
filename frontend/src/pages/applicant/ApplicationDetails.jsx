@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import api from '../../services/api';
+import api, { getFileDownloadUrl } from '../../services/api';
 import StatusBadge from '../../components/StatusBadge';
 import TimelineTracker from '../../components/TimelineTracker';
 
@@ -229,7 +229,7 @@ const ApplicationDetails = () => {
                 <i className="bi bi-qr-code-scan me-1"></i> Public Verify
               </Link>
               <a
-                href={`http://localhost:5000/api/certificates/${certificate._id}/download`}
+                href={getFileDownloadUrl(`/api/certificates/${certificate._id}/download`)}
                 target="_blank"
                 rel="noreferrer"
                 className="btn btn-success btn-sm fw-bold"

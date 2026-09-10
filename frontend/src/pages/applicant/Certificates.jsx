@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import api from '../../services/api';
+import api, { getFileDownloadUrl } from '../../services/api';
 import StatusBadge from '../../components/StatusBadge';
 
 const Certificates = () => {
@@ -81,7 +81,7 @@ const Certificates = () => {
                     <td>
                       <div className="d-flex gap-2">
                         <a
-                          href={`http://localhost:5000/api/certificates/${cert._id}/download`}
+                          href={getFileDownloadUrl(`/api/certificates/${cert._id}/download`)}
                           target="_blank"
                           rel="noreferrer"
                           className="btn btn-success btn-sm py-1 px-2"
