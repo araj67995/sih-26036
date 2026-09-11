@@ -62,7 +62,7 @@ Sample Verified Certificate Numbers / Serial Numbers for Public Verification:
 
 ## 🚀 Live Cloud Deployment (Render.com)
 
-The repository includes a ready-to-use [`render.yaml`](./render.yaml) blueprint:
+The repository includes a ready-to-use [`render.yaml.example`](./render.yaml.example) blueprint (copy to `render.yaml` and configure your credentials):
 
 1. **Backend Web Service:**
    - **Build Command:** `cd backend && npm install`

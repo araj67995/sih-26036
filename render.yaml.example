@@ -1,4 +1,4 @@
-services:
+﻿services:
   # ----------------------------------------------------
   # 1. Backend Node.js Web Service (API)
   # ----------------------------------------------------
@@ -14,9 +14,9 @@ services:
       - key: NODE_ENV
         value: production
       - key: MONGO_URI
-        value: mongodb+srv://sih:sih@cluster1.seew8.mongodb.net/legal_metrology_db?retryWrites=true&w=majority
+        sync: false # Configure secretly in Render Dashboard
       - key: JWT_SECRET
-        value: supersecret_legal_metrology_jwt_key_2026
+        generateValue: true
       - key: JWT_EXPIRE
         value: 7d
       - key: CLIENT_URL

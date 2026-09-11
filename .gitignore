@@ -35,3 +35,8 @@ backend/src/uploads/evidence/*
 backend/src/uploads/receipts/*
 !backend/src/uploads/receipts/.gitkeep
 
+# Render Blueprint with credentials
+render.yaml
+!render.yaml.example
+
+
