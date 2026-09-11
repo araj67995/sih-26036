@@ -1,4 +1,4 @@
-const { Inspection, Application } = require('../models');
+const { Inspection, Application, Instrument, Notification } = require('../models');
 const ApiResponse = require('../utils/apiResponse');
 const { logAction } = require('../services/auditService');
 
@@ -26,13 +26,19 @@ const recordInspection = async (req, res, next) => {
       return ApiResponse.error(res, 'Application not found', 404);
     }
 
-    // Auto calculate error: Error = observedReading - standardWeight
+    // Evaluate error tolerance and physical verification conditions
     const std = Number(standardWeight);
     const obs = Number(observedReading);
     const mpe = Number(permissibleError);
     const calculatedError = Number((obs - std).toFixed(6));
     const isCompliant = Math.abs(calculatedError) <= Math.abs(mpe);
-    const result = isCompliant ? 'PASS' : 'FAIL';
+
+    const isConditionFailed = instrumentCondition === 'DAMAGED' || instrumentCondition === 'UNSATISFACTORY';
+    const isSerialFailed = serialNumberVerified === false;
+    const isSealFailed = sealCondition === 'BROKEN' || sealCondition === 'TAMPERED';
+
+    const isFailed = !isCompliant || isConditionFailed || isSerialFailed || isSealFailed;
+    const result = isFailed ? 'FAIL' : 'PASS';
 
     // Check if inspection already exists for this application
     let inspection = await Inspection.findOne({ application: applicationId });
@@ -69,20 +75,62 @@ const recordInspection = async (req, res, next) => {
       });
     }
 
-    // Move application status to INSPECTION_COMPLETED
     const prevStatus = application.status;
-    application.status = 'INSPECTION_COMPLETED';
-    await application.save();
 
-    await logAction({
-      user: req.user._id,
-      action: 'INSPECTION_RECORDED',
-      entityType: 'Inspection',
-      entityId: inspection._id,
-      previousStatus: prevStatus,
-      newStatus: 'INSPECTION_COMPLETED',
-      description: `Inspection completed by Officer ${req.user.name}. Reading: ${obs}, Standard: ${std}, Error: ${calculatedError > 0 ? '+' : ''}${calculatedError}, Result: ${result}`,
-    });
+    // If inspection failed, immediately reject the application and instrument
+    if (result === 'FAIL') {
+      application.status = 'REJECTED';
+      const failureReasons = [];
+      if (!isCompliant) failureReasons.push(`Error (${calculatedError > 0 ? '+' : ''}${calculatedError} kg) exceeds permissible limit (±${mpe} kg)`);
+      if (isConditionFailed) failureReasons.push(`Physical condition defective: ${instrumentCondition}`);
+      if (isSerialFailed) failureReasons.push(`Serial plate verification failed`);
+      if (isSealFailed) failureReasons.push(`Security seal is ${sealCondition}`);
+      if (remarks) failureReasons.push(remarks);
+
+      application.rejectionReason = failureReasons.join('; ') || 'Instrument failed metrological inspection criteria';
+      await application.save();
+
+      if (application.instrument) {
+        await Instrument.findByIdAndUpdate(application.instrument, { status: 'REJECTED' });
+      }
+
+      await logAction({
+        user: req.user._id,
+        action: 'APPLICATION_REJECTED',
+        entityType: 'Application',
+        entityId: application._id,
+        previousStatus: prevStatus,
+        newStatus: 'REJECTED',
+        description: `Application rejected after failed inspection: ${application.rejectionReason}`,
+      });
+
+      try {
+        await Notification.create({
+          user: application.applicant,
+          recipient: application.applicant,
+          title: 'Verification Inspection Failed - Application Rejected',
+          message: `Application ${application.applicationNumber} has been rejected following physical inspection. Reason: ${application.rejectionReason}`,
+          type: 'APPLICATION_REJECTED',
+          relatedEntity: { entityType: 'Application', entityId: application._id },
+        });
+      } catch (notifErr) {
+        console.warn('Notification creation warning:', notifErr.message);
+      }
+    } else {
+      // PASS
+      application.status = 'INSPECTION_COMPLETED';
+      await application.save();
+
+      await logAction({
+        user: req.user._id,
+        action: 'INSPECTION_RECORDED',
+        entityType: 'Inspection',
+        entityId: inspection._id,
+        previousStatus: prevStatus,
+        newStatus: 'INSPECTION_COMPLETED',
+        description: `Inspection passed by Officer ${req.user.name}. Reading: ${obs}, Standard: ${std}, Error: ${calculatedError > 0 ? '+' : ''}${calculatedError}, Result: PASS`,
+      });
+    }
 
     return ApiResponse.success(
       res,

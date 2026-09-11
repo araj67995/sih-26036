@@ -26,6 +26,7 @@ const InspectionForm = () => {
   // Existing inspection if already conducted
   const [existingInspection, setExistingInspection] = useState(null);
   const [issuedCertificate, setIssuedCertificate] = useState(null);
+  const [documents, setDocuments] = useState([]);
 
   useEffect(() => {
     const fetchApp = async () => {
@@ -34,6 +35,7 @@ const InspectionForm = () => {
         const res = await api.get(`/officer/applications/${id}`);
         if (res.success) {
           setApplicationData(res.data.application);
+          setDocuments(res.data.documents || []);
           if (res.data.inspection) {
             setExistingInspection(res.data.inspection);
             setInstrumentCondition(res.data.inspection.instrumentCondition);
@@ -87,7 +89,17 @@ const InspectionForm = () => {
 
       if (res.success) {
         setExistingInspection(res.data.inspection);
-        setSuccess(`Inspection observations recorded successfully! Result: ${res.data.inspection.result}`);
+        if (res.data.inspection.result === 'FAIL') {
+          setError('Inspection test recorded as FAIL: Measurement error or physical condition violated legal metrology limits. Application and instrument marked as REJECTED.');
+        } else {
+          setSuccess('Inspection observations recorded successfully! Result: PASS.');
+        }
+        try {
+          const appRes = await api.get(`/officer/applications/${id}`);
+          if (appRes.success) {
+            setApplicationData(appRes.data.application);
+          }
+        } catch (e) {}
       }
     } catch (err) {
       setError(err.message || 'Failed to record inspection');
@@ -180,6 +192,28 @@ const InspectionForm = () => {
         </div>
       )}
 
+      {/* Rejection Alert Banner */}
+      {(applicationData?.status === 'REJECTED' || existingInspection?.result === 'FAIL') && (
+        <div className="gov-card p-4 mb-4 bg-danger-subtle border-danger text-danger">
+          <div className="d-flex flex-wrap justify-content-between align-items-center">
+            <div>
+              <span className="badge bg-danger mb-2">
+                <i className="bi bi-x-octagon-fill me-1"></i> VERIFICATION REJECTED
+              </span>
+              <h5 className="fw-bold mb-1">
+                Application Marked as REJECTED
+              </h5>
+              <p className="small mb-0">
+                <strong>Reason:</strong> {applicationData?.rejectionReason || existingInspection?.remarks || 'Instrument failed metrological inspection error tolerance criteria.'}
+              </p>
+            </div>
+            <Link to="/officer/applications" className="btn btn-outline-danger btn-sm mt-2 mt-sm-0">
+              <i className="bi bi-arrow-left me-1"></i> Return to Queue
+            </Link>
+          </div>
+        </div>
+      )}
+
       {/* Instrument Overview Banner */}
       <div className="gov-card p-4 mb-4 bg-light">
         <div className="row g-3 small">
@@ -201,6 +235,48 @@ const InspectionForm = () => {
           </div>
         </div>
       </div>
+
+      {/* Attached Verification Documents */}
+      {documents.length > 0 && (
+        <div className="gov-card p-3 mb-4 bg-white border">
+          <div className="d-flex justify-content-between align-items-center mb-2">
+            <h6 className="fw-bold text-navy mb-0">
+              <i className="bi bi-folder2-open text-primary me-2"></i>
+              Applicant Uploaded Documents ({documents.length})
+            </h6>
+            <span className="small text-muted">Original purchase invoices & model approvals submitted by applicant</span>
+          </div>
+          <div className="d-flex flex-wrap gap-2 pt-1">
+            {documents.map((doc) => (
+              <a
+                key={doc._id}
+                href={getFileDownloadUrl(doc.fileUrl)}
+                target="_blank"
+                rel="noreferrer"
+                className="btn btn-sm btn-outline-primary d-inline-flex align-items-center gap-2 py-1 px-3"
+              >
+                <i className="bi bi-file-earmark-pdf text-danger"></i>
+                <span className="badge bg-primary-subtle text-primary border border-primary-subtle font-monospace">
+                  {doc.documentType}
+                </span>
+                <span className="text-truncate" style={{ maxWidth: '280px' }}>
+                  {doc.fileName || 'Attachment'}
+                </span>
+                {doc.verificationStatus === 'APPROVED' ? (
+                  <span className="badge bg-success-subtle text-success border border-success-subtle small">
+                    <i className="bi bi-check-circle-fill me-1"></i>APPROVED
+                  </span>
+                ) : (
+                  <span className="badge bg-warning-subtle text-dark border border-warning-subtle small">
+                    PENDING
+                  </span>
+                )}
+                <i className="bi bi-box-arrow-up-right small text-muted"></i>
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="row g-4">
         {/* Left Column: Inspection Parameters */}
@@ -380,7 +456,7 @@ const InspectionForm = () => {
             </div>
 
             {/* Certificate Generation Action */}
-            {existingInspection && isPass && !issuedCertificate && (
+            {existingInspection && existingInspection.result === 'PASS' && isPass && applicationData?.status !== 'REJECTED' && !issuedCertificate && (
               <div className="border-top pt-3">
                 <button
                   type="button"

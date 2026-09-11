@@ -19,6 +19,7 @@ const certificateRoutes = require('./routes/certificateRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const verifyRoutes = require('./routes/verifyRoutes');
+const paymentRoutes = require('./routes/paymentRoutes');
 
 const app = express();
 
@@ -102,6 +103,7 @@ app.use('/api/certificates', certificateRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/verify', verifyRoutes);
+app.use('/api/payments', paymentRoutes);
 
 // Fallback for undefined routes & Centralized Error Handler
 app.use(notFound);

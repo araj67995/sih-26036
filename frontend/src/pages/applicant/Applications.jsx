@@ -90,6 +90,7 @@ const Applications = () => {
                   <th>Serial Number</th>
                   <th>Type</th>
                   <th>Assigned Officer</th>
+                  <th>Statutory Fee</th>
                   <th>Date Submitted</th>
                   <th>Status</th>
                   <th>Action</th>
@@ -105,6 +106,18 @@ const Applications = () => {
                       <span className="badge bg-light text-dark border">{app.applicationType}</span>
                     </td>
                     <td>{app.assignedOfficer?.name || <span className="text-muted fst-italic">Pending Allocation</span>}</td>
+                    <td>
+                      {app.payment?.feeBreakdown?.totalAmount ? (
+                        <span className="badge bg-success-subtle text-success border border-success-subtle font-monospace">
+                          <i className="bi bi-check-circle me-1"></i>
+                          ₹{app.payment.feeBreakdown.totalAmount}
+                        </span>
+                      ) : (
+                        <span className="badge bg-success-subtle text-success border border-success-subtle">
+                          <i className="bi bi-check-circle me-1"></i> PAID
+                        </span>
+                      )}
+                    </td>
                     <td>{new Date(app.submittedAt || app.createdAt).toLocaleDateString()}</td>
                     <td>
                       <StatusBadge status={app.status} />

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import api from '../../services/api';
+import api, { getFileDownloadUrl } from '../../services/api';
 import StatusBadge from '../../components/StatusBadge';
 
 const AssignedApplications = () => {
@@ -9,6 +9,11 @@ const AssignedApplications = () => {
   const [selectedApp, setSelectedApp] = useState(null);
   const [showReviewModal, setShowReviewModal] = useState(false);
   const [showScheduleModal, setShowScheduleModal] = useState(false);
+  const [showDocModal, setShowDocModal] = useState(false);
+
+  // Document state
+  const [appDocuments, setAppDocuments] = useState([]);
+  const [loadingDocs, setLoadingDocs] = useState(false);
 
   // Review Form state
   const [reviewAction, setReviewAction] = useState('APPROVE');
@@ -42,12 +47,74 @@ const AssignedApplications = () => {
     fetchApplications();
   }, [statusFilter]);
 
+  const fetchDocsForApp = async (appId) => {
+    try {
+      setLoadingDocs(true);
+      const res = await api.get(`/applications/${appId}/documents`);
+      if (res.success) {
+        setAppDocuments(res.data || []);
+      }
+    } catch (err) {
+      console.warn('Failed to load application documents:', err);
+      setAppDocuments([]);
+    } finally {
+      setLoadingDocs(false);
+    }
+  };
+
+  const handleUpdateDocStatus = async (docId, newStatus) => {
+    try {
+      let reason = '';
+      if (newStatus === 'REJECTED') {
+        reason = window.prompt(
+          'Enter reason for document rejection (this will mark the entire application as DOCUMENT_REJECTED):',
+          'Document illegible, invalid, or does not satisfy legal metrology standards'
+        );
+        if (reason === null) return; // Officer cancelled
+      }
+
+      const res = await api.put(`/officer/documents/${docId}/status`, { status: newStatus, reason });
+      if (res.success) {
+        setAppDocuments((prev) =>
+          prev.map((d) => (d._id === docId ? { ...d, verificationStatus: newStatus } : d))
+        );
+
+        if (newStatus === 'REJECTED') {
+          fetchApplications();
+          setAlert({
+            type: 'danger',
+            message: `Document rejected. Application ${selectedApp?.applicationNumber} has been updated to DOCUMENT_REJECTED.`,
+          });
+        }
+      }
+    } catch (err) {
+      console.error('Failed to update document status:', err);
+    }
+  };
+
+  const handleApproveAllDocs = async () => {
+    for (const doc of appDocuments) {
+      if (doc.verificationStatus !== 'APPROVED') {
+        await handleUpdateDocStatus(doc._id, 'APPROVED');
+      }
+    }
+  };
+
   const openReview = (app) => {
     setSelectedApp(app);
     setReviewAction('APPROVE');
     setReviewRemarks('Documents scrutinized and found compliant with Legal Metrology requirements.');
     setRejectionReason('');
+    setAppDocuments([]);
     setShowReviewModal(true);
+    fetchDocsForApp(app._id);
+  };
+
+  const openDocViewer = (app) => {
+    setSelectedApp(app);
+    setAppDocuments([]);
+    setShowDocModal(true);
+    fetchDocsForApp(app._id);
   };
 
   const openSchedule = (app) => {
@@ -226,6 +293,15 @@ const AssignedApplications = () => {
                         >
                           <i className="bi bi-speedometer2 me-1"></i> Inspect
                         </Link>
+
+                        {/* Always visible View Documents button */}
+                        <button
+                          className="btn btn-outline-secondary btn-sm py-1 px-2"
+                          onClick={() => openDocViewer(app)}
+                          title="View attached applicant documents"
+                        >
+                          <i className="bi bi-folder2-open me-1"></i> Docs
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -239,7 +315,7 @@ const AssignedApplications = () => {
       {/* Review Documents Modal */}
       {showReviewModal && (
         <div className="modal show d-block" tabIndex="-1" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
-          <div className="modal-dialog modal-dialog-centered">
+          <div className="modal-dialog modal-dialog-centered modal-lg">
             <div className="modal-content">
               <div className="modal-header bg-light">
                 <h5 className="modal-title fw-bold text-navy">
@@ -251,6 +327,93 @@ const AssignedApplications = () => {
 
               <form onSubmit={handleReviewSubmit}>
                 <div className="modal-body">
+                  {/* Uploaded Documents List for Scrutiny */}
+                  <div className="mb-4 p-3 bg-light rounded border">
+                    <div className="d-flex justify-content-between align-items-center mb-2">
+                      <h6 className="fw-bold text-navy mb-0">
+                        <i className="bi bi-folder2-open text-primary me-2"></i>
+                        Attached Applicant Documents ({appDocuments.length})
+                      </h6>
+                      <span className="small text-muted">Click to inspect original file</span>
+                    </div>
+
+                    {loadingDocs ? (
+                      <div className="text-center py-3 text-muted small">
+                        <div className="spinner-border spinner-border-sm text-primary me-2"></div>
+                        Retrieving uploaded documents from server...
+                      </div>
+                    ) : appDocuments.length === 0 ? (
+                      <div className="alert alert-warning py-2 px-3 small mb-0">
+                        <i className="bi bi-exclamation-triangle me-1"></i> No documents attached to this application.
+                      </div>
+                    ) : (
+                      <div className="list-group list-group-flush rounded border bg-white">
+                        {appDocuments.map((doc) => (
+                          <div
+                            key={doc._id}
+                            className="list-group-item d-flex flex-wrap justify-content-between align-items-center py-2 px-3 gap-2"
+                          >
+                            <div className="d-flex align-items-center gap-2">
+                              <span className="badge bg-primary-subtle text-primary border border-primary-subtle font-monospace">
+                                {doc.documentType}
+                              </span>
+                              <div>
+                                <div className="small fw-semibold text-truncate" style={{ maxWidth: '280px' }}>
+                                  {doc.fileName || 'Uploaded Attachment'}
+                                </div>
+                                <span className="text-muted" style={{ fontSize: '0.72rem' }}>
+                                  Uploaded: {new Date(doc.uploadedAt || doc.createdAt).toLocaleDateString()}
+                                </span>
+                              </div>
+                            </div>
+                            <div className="d-flex align-items-center gap-2">
+                              {doc.verificationStatus === 'APPROVED' ? (
+                                <span className="badge bg-success">
+                                  <i className="bi bi-check-circle-fill me-1"></i> APPROVED
+                                </span>
+                              ) : doc.verificationStatus === 'REJECTED' ? (
+                                <span className="badge bg-danger">
+                                  <i className="bi bi-x-circle-fill me-1"></i> REJECTED
+                                </span>
+                              ) : (
+                                <span className="badge bg-warning text-dark">
+                                  <i className="bi bi-clock-history me-1"></i> PENDING
+                                </span>
+                              )}
+                              <a
+                                href={getFileDownloadUrl(doc.fileUrl)}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="btn btn-outline-primary btn-sm py-1 px-2 fw-semibold"
+                              >
+                                <i className="bi bi-box-arrow-up-right me-1"></i> View
+                              </a>
+                              {doc.verificationStatus !== 'APPROVED' && (
+                                <button
+                                  type="button"
+                                  className="btn btn-success btn-sm py-1 px-2"
+                                  onClick={() => handleUpdateDocStatus(doc._id, 'APPROVED')}
+                                  title="Approve this document"
+                                >
+                                  <i className="bi bi-check-lg"></i>
+                                </button>
+                              )}
+                              {doc.verificationStatus === 'PENDING' && (
+                                <button
+                                  type="button"
+                                  className="btn btn-outline-danger btn-sm py-1 px-2"
+                                  onClick={() => handleUpdateDocStatus(doc._id, 'REJECTED')}
+                                  title="Reject this document"
+                                >
+                                  <i className="bi bi-x-lg"></i>
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   <div className="mb-3">
                     <label className="form-label">Review Decision *</label>
                     <div className="d-flex gap-3">
@@ -276,13 +439,27 @@ const AssignedApplications = () => {
                           value="REJECT"
                           checked={reviewAction === 'REJECT'}
                           onChange={() => setReviewAction('REJECT')}
+                          disabled={appDocuments.length > 0 && appDocuments.every((d) => d.verificationStatus === 'APPROVED')}
                           className="form-check-input"
                         />
-                        <label htmlFor="revReject" className="form-check-label text-danger fw-bold">
+                        <label
+                          htmlFor="revReject"
+                          className={`form-check-label fw-bold ${
+                            appDocuments.length > 0 && appDocuments.every((d) => d.verificationStatus === 'APPROVED')
+                              ? 'text-muted'
+                              : 'text-danger'
+                          }`}
+                        >
                           Reject Documents
                         </label>
                       </div>
                     </div>
+                    {appDocuments.length > 0 && appDocuments.every((d) => d.verificationStatus === 'APPROVED') && (
+                      <small className="text-success d-block mt-1">
+                        <i className="bi bi-shield-check me-1"></i>
+                        All attached documents are verified. Rejection option is disabled.
+                      </small>
+                    )}
                   </div>
 
                   {reviewAction === 'REJECT' ? (
@@ -374,6 +551,140 @@ const AssignedApplications = () => {
                   </button>
                 </div>
               </form>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Standalone View Documents Modal */}
+      {showDocModal && (
+        <div className="modal show d-block" tabIndex="-1" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div className="modal-dialog modal-dialog-centered modal-lg">
+            <div className="modal-content">
+              <div className="modal-header bg-light">
+                <h5 className="modal-title fw-bold text-navy">
+                  <i className="bi bi-folder2-open text-primary me-2"></i>
+                  Verification Documents: {selectedApp?.applicationNumber}
+                </h5>
+                <button type="button" className="btn-close" onClick={() => setShowDocModal(false)}></button>
+              </div>
+
+              <div className="modal-body">
+                <div className="d-flex justify-content-between align-items-center mb-3">
+                  <div>
+                    <span className="text-muted small">Applicant: </span>
+                    <strong className="text-dark">{selectedApp?.applicant?.name}</strong>
+                    <span className="text-muted small"> ({selectedApp?.business?.businessName})</span>
+                  </div>
+                  <div className="d-flex align-items-center gap-2">
+                    {appDocuments.some((d) => d.verificationStatus !== 'APPROVED') && (
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-outline-success fw-semibold"
+                        onClick={handleApproveAllDocs}
+                      >
+                        <i className="bi bi-check-all me-1"></i> Approve All
+                      </button>
+                    )}
+                    <span className="badge bg-light text-dark border">
+                      Instrument: {selectedApp?.instrument?.model} (SN: {selectedApp?.instrument?.serialNumber})
+                    </span>
+                  </div>
+                </div>
+
+                {loadingDocs ? (
+                  <div className="text-center py-4">
+                    <div className="spinner-border spinner-border-sm text-primary me-2"></div>
+                    <span className="text-muted small">Loading documents from MongoDB...</span>
+                  </div>
+                ) : appDocuments.length === 0 ? (
+                  <div className="alert alert-info py-3 px-3 small mb-0">
+                    <i className="bi bi-info-circle me-1"></i> No documents uploaded for this application.
+                  </div>
+                ) : (
+                  <div className="table-responsive">
+                    <table className="table table-sm table-hover align-middle mb-0">
+                      <thead className="table-light">
+                        <tr>
+                          <th>Document Type</th>
+                          <th>File Name</th>
+                          <th>Upload Date</th>
+                          <th>Status</th>
+                          <th className="text-end">Action Controls</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {appDocuments.map((doc) => (
+                          <tr key={doc._id}>
+                            <td>
+                              <span className="badge bg-primary-subtle text-primary border border-primary-subtle font-monospace">
+                                {doc.documentType}
+                              </span>
+                            </td>
+                            <td className="small fw-semibold">{doc.fileName || 'Attached Document'}</td>
+                            <td className="small text-muted">
+                              {new Date(doc.uploadedAt || doc.createdAt).toLocaleDateString()}
+                            </td>
+                            <td>
+                              {doc.verificationStatus === 'APPROVED' ? (
+                                <span className="badge bg-success">
+                                  <i className="bi bi-check-circle-fill me-1"></i> APPROVED
+                                </span>
+                              ) : doc.verificationStatus === 'REJECTED' ? (
+                                <span className="badge bg-danger">
+                                  <i className="bi bi-x-circle-fill me-1"></i> REJECTED
+                                </span>
+                              ) : (
+                                <span className="badge bg-warning text-dark">
+                                  <i className="bi bi-clock-history me-1"></i> PENDING
+                                </span>
+                              )}
+                            </td>
+                            <td className="text-end">
+                              <div className="d-inline-flex gap-1">
+                                <a
+                                  href={getFileDownloadUrl(doc.fileUrl)}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="btn btn-sm btn-outline-primary py-1 px-2 fw-semibold"
+                                >
+                                  <i className="bi bi-box-arrow-up-right me-1"></i> View
+                                </a>
+                                {doc.verificationStatus !== 'APPROVED' && (
+                                  <button
+                                    type="button"
+                                    className="btn btn-sm btn-success py-1 px-2"
+                                    onClick={() => handleUpdateDocStatus(doc._id, 'APPROVED')}
+                                    title="Approve this document"
+                                  >
+                                    <i className="bi bi-check-lg me-1"></i> Approve
+                                  </button>
+                                )}
+                                {doc.verificationStatus === 'PENDING' && (
+                                  <button
+                                    type="button"
+                                    className="btn btn-sm btn-outline-danger py-1 px-2"
+                                    onClick={() => handleUpdateDocStatus(doc._id, 'REJECTED')}
+                                    title="Reject this document"
+                                  >
+                                    <i className="bi bi-x-lg me-1"></i> Reject
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              <div className="modal-footer bg-light">
+                <button type="button" className="btn btn-secondary btn-sm" onClick={() => setShowDocModal(false)}>
+                  Close
+                </button>
+              </div>
             </div>
           </div>
         </div>

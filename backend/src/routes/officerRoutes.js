@@ -8,6 +8,7 @@ const {
   approveApplication,
   rejectApplication,
   getOfficerStats,
+  updateDocumentStatus,
 } = require('../controllers/officerController');
 const { protect, authorize } = require('../middleware/authMiddleware');
 
@@ -20,6 +21,7 @@ router.put('/applications/:id/review', reviewApplication);
 router.put('/applications/:id/schedule', scheduleInspection);
 router.post('/applications/:id/approve', approveApplication);
 router.post('/applications/:id/reject', rejectApplication);
+router.put('/documents/:id/status', updateDocumentStatus);
 router.get('/stats', getOfficerStats);
 
 module.exports = router;

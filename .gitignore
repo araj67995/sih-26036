@@ -19,9 +19,11 @@ yarn-debug.log*
 yarn-error.log*
 *.log
 
-# OS generated files
+# OS / Cloud Sync generated files
 .DS_Store
 Thumbs.db
+.tmp.driveupload/
+*.driveupload/
 
 # Uploaded dynamic assets in runtime (keep directory structures)
 backend/src/uploads/documents/*
@@ -30,3 +32,6 @@ backend/src/uploads/certificates/*
 !backend/src/uploads/certificates/.gitkeep
 backend/src/uploads/evidence/*
 !backend/src/uploads/evidence/.gitkeep
+backend/src/uploads/receipts/*
+!backend/src/uploads/receipts/.gitkeep
+

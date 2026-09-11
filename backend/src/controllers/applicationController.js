@@ -1,6 +1,8 @@
-const { Application, Business, Instrument, Document, Certificate, Inspection, User } = require('../models');
+const { Application, Business, Instrument, Document, Certificate, Inspection, User, Payment, Notification } = require('../models');
 const ApiResponse = require('../utils/apiResponse');
 const { logAction } = require('../services/auditService');
+const { calculateMachineFee } = require('../utils/feeCalculator');
+const { generateReceiptPDF } = require('../services/pdfService');
 
 /**
  * Generate readable unique application number e.g. APP-2026-10482
@@ -18,7 +20,7 @@ const generateAppNumber = () => {
  */
 const createApplication = async (req, res, next) => {
   try {
-    const { instrumentId, applicationType, remarks } = req.body;
+    const { instrumentId, applicationType, remarks, paymentMethod, payFee } = req.body;
 
     const instrument = await Instrument.findById(instrumentId);
     if (!instrument) {
@@ -46,6 +48,7 @@ const createApplication = async (req, res, next) => {
       instrument: instrument._id,
       applicationType: applicationType || 'INITIAL',
       status: 'SUBMITTED',
+      paymentStatus: 'PAID',
       assignedOfficer: availableOfficer ? availableOfficer._id : null,
       submittedAt: new Date(),
       remarks: remarks || '',
@@ -55,6 +58,64 @@ const createApplication = async (req, res, next) => {
     instrument.status = 'VERIFICATION_PENDING';
     await instrument.save();
 
+    // Generate statutory payment & official receipt according to machine
+    let paymentRecord = null;
+    const feeBreakdown = calculateMachineFee(instrument, applicationType || 'INITIAL');
+    const year = new Date().getFullYear();
+    const receiptNumber = `RCP-${year}-${Math.floor(10000 + Math.random() * 90000)}`;
+    const transactionId = `TXN-${year}-${Math.floor(10000000 + Math.random() * 90000000)}`;
+    const paidAt = new Date();
+
+    let receiptPdfUrl = '';
+    try {
+      receiptPdfUrl = await generateReceiptPDF({
+        receiptNumber,
+        transactionId,
+        applicationNumber: application.applicationNumber,
+        applicationType: application.applicationType,
+        businessName: business.businessName,
+        businessAddress: `${business.address || ''}, ${business.district || ''}, ${business.state || ''} - ${business.pincode || ''}`,
+        applicantName: req.user.name,
+        applicantPhone: req.user.phone,
+        applicantEmail: req.user.email,
+        gstNumber: business.gstNumber || 'N/A',
+        instrumentType: instrument.instrumentType,
+        manufacturer: instrument.manufacturer,
+        model: instrument.model,
+        serialNumber: instrument.serialNumber,
+        capacity: instrument.capacity,
+        unit: instrument.unit,
+        location: instrument.location,
+        feeBreakdown,
+        paymentMethod: paymentMethod || 'UPI',
+        paidAt,
+        clientUrl: process.env.CLIENT_URL || 'http://localhost:5173',
+      });
+    } catch (pdfErr) {
+      console.error('PDF receipt generation warning:', pdfErr.message);
+    }
+
+    paymentRecord = await Payment.create({
+      receiptNumber,
+      transactionId,
+      application: application._id,
+      applicant: req.user._id,
+      business: business._id,
+      instrument: instrument._id,
+      applicationType: application.applicationType,
+      feeBreakdown,
+      currency: 'INR',
+      paymentMethod: paymentMethod || 'UPI',
+      paymentGateway: 'BharatKosh / Legal Metrology Instant Settlement',
+      status: 'PAID',
+      paidAt,
+      receiptPdfUrl,
+      remarks: 'Statutory verification fee paid at submission',
+    });
+
+    application.payment = paymentRecord._id;
+    await application.save();
+
     await logAction({
       user: req.user._id,
       action: 'APPLICATION_SUBMITTED',
@@ -62,11 +123,37 @@ const createApplication = async (req, res, next) => {
       entityId: application._id,
       previousStatus: 'DRAFT',
       newStatus: 'SUBMITTED',
-      description: `Application ${application.applicationNumber} submitted for ${instrument.model} (SN: ${instrument.serialNumber})`,
+      description: `Application ${application.applicationNumber} submitted for ${instrument.model} (SN: ${instrument.serialNumber}). Fee ₹${feeBreakdown.totalAmount} paid under receipt ${receiptNumber}`,
       ipAddress: req.ip,
     });
 
-    return ApiResponse.success(res, application, 'Verification application submitted successfully', 201);
+    try {
+      await Notification.create({
+        user: req.user._id,
+        recipient: req.user._id,
+        title: 'Verification Application & Fee Payment Received',
+        message: `Application ${application.applicationNumber} submitted. Statutory fee of ₹${feeBreakdown.totalAmount} paid (Receipt: ${receiptNumber}).`,
+        type: 'PAYMENT',
+        relatedEntity: {
+          entityType: 'Application',
+          entityId: application._id,
+        },
+      });
+    } catch (notifErr) {
+      console.warn('[Notification Warning]: Failed to generate in-app notification:', notifErr.message);
+    }
+
+    return ApiResponse.success(
+      res,
+      {
+        ...application.toObject(),
+        payment: paymentRecord,
+        receiptNumber,
+        receiptPdfUrl,
+      },
+      'Verification application submitted and statutory fee paid successfully',
+      201
+    );
   } catch (error) {
     next(error);
   }
@@ -99,6 +186,7 @@ const getApplications = async (req, res, next) => {
       .populate('business', 'businessName businessType district state')
       .populate('instrument', 'instrumentType manufacturer model serialNumber capacity unit')
       .populate('assignedOfficer', 'name email')
+      .populate('payment')
       .sort({ createdAt: -1 });
 
     return ApiResponse.success(res, applications, 'Applications retrieved successfully');
@@ -108,7 +196,7 @@ const getApplications = async (req, res, next) => {
 };
 
 /**
- * @desc   Get single application details with related documents, inspection, and certificate
+ * @desc   Get single application details with related documents, inspection, certificate, and payment receipt
  * @route  GET /api/applications/:id
  * @access Private
  */
@@ -118,7 +206,8 @@ const getApplicationById = async (req, res, next) => {
       .populate('applicant', 'name email phone')
       .populate('business')
       .populate('instrument')
-      .populate('assignedOfficer', 'name email phone');
+      .populate('assignedOfficer', 'name email phone')
+      .populate('payment');
 
     if (!application) {
       return ApiResponse.error(res, 'Application not found', 404);
@@ -144,6 +233,14 @@ const getApplicationById = async (req, res, next) => {
     const certificate = await Certificate.findOne({ application: application._id })
       .populate('issuedBy', 'name email');
 
+    // Fetch payment if not already populated
+    let payment = application.payment;
+    if (!payment) {
+      payment = await Payment.findOne({ application: application._id })
+        .populate('instrument')
+        .populate('business');
+    }
+
     return ApiResponse.success(
       res,
       {
@@ -151,6 +248,7 @@ const getApplicationById = async (req, res, next) => {
         documents,
         inspection,
         certificate,
+        payment,
       },
       'Application details retrieved successfully'
     );

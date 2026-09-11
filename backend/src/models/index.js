@@ -8,6 +8,7 @@ const Certificate = require('./Certificate');
 const Notification = require('./Notification');
 const AuditLog = require('./AuditLog');
 const TestCentre = require('./TestCentre');
+const Payment = require('./Payment');
 
 module.exports = {
   User,
@@ -20,4 +21,5 @@ module.exports = {
   Notification,
   AuditLog,
   TestCentre,
+  Payment,
 };

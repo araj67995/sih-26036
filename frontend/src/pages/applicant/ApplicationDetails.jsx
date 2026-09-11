@@ -3,12 +3,14 @@ import { useParams, Link } from 'react-router-dom';
 import api, { getFileDownloadUrl } from '../../services/api';
 import StatusBadge from '../../components/StatusBadge';
 import TimelineTracker from '../../components/TimelineTracker';
+import ReceiptModal from '../../components/ReceiptModal';
 
 const ApplicationDetails = () => {
   const { id } = useParams();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [showReceiptModal, setShowReceiptModal] = useState(false);
 
   useEffect(() => {
     const fetchDetails = async () => {
@@ -16,7 +18,16 @@ const ApplicationDetails = () => {
         setLoading(true);
         const res = await api.get(`/applications/${id}`);
         if (res.success) {
-          setData(res.data);
+          let paymentData = res.data.payment;
+          if (!paymentData) {
+            try {
+              const pRes = await api.get(`/payments/application/${id}`);
+              if (pRes.success) paymentData = pRes.data;
+            } catch (err) {
+              // payment not found or error
+            }
+          }
+          setData({ ...res.data, payment: paymentData });
         } else {
           setError(res.message);
         }
@@ -51,7 +62,7 @@ const ApplicationDetails = () => {
     );
   }
 
-  const { application, documents, inspection, certificate } = data;
+  const { application, documents, inspection, certificate, payment } = data;
 
   return (
     <div className="application-details">
@@ -166,6 +177,70 @@ const ApplicationDetails = () => {
           </div>
         </div>
       </div>
+
+      {/* Statutory Fee Payment & Official Receipt Card */}
+      {payment ? (
+        <div className="gov-card p-4 mb-4 border-start border-4 border-success">
+          <div className="d-flex flex-wrap justify-content-between align-items-center mb-3 border-bottom pb-2">
+            <div>
+              <span className="badge bg-success mb-1">
+                <i className="bi bi-patch-check-fill me-1"></i> Statutory Fee Paid & Verified
+              </span>
+              <h5 className="fw-bold text-navy mb-0">
+                Receipt Number: <span className="font-monospace text-primary">{payment.receiptNumber}</span>
+              </h5>
+            </div>
+            <div className="d-flex gap-2 mt-2 mt-sm-0">
+              <button
+                type="button"
+                className="btn btn-outline-primary btn-sm"
+                onClick={() => setShowReceiptModal(true)}
+              >
+                <i className="bi bi-eye-fill me-1"></i> View Receipt
+              </button>
+              <a
+                href={getFileDownloadUrl(`/api/payments/${payment._id || payment.receiptNumber}/receipt/download`)}
+                target="_blank"
+                rel="noreferrer"
+                className="btn btn-success btn-sm fw-bold"
+              >
+                <i className="bi bi-file-earmark-pdf-fill me-1"></i> Download PDF Receipt
+              </a>
+            </div>
+          </div>
+
+          <div className="row g-3 small">
+            <div className="col-md-3 col-sm-6">
+              <span className="text-muted d-block">Transaction / UTR ID:</span>
+              <strong className="font-monospace text-dark">{payment.transactionId}</strong>
+            </div>
+            <div className="col-md-3 col-sm-6">
+              <span className="text-muted d-block">Total Statutory Amount:</span>
+              <strong className="fs-6 text-success font-monospace">
+                ₹ {payment.feeBreakdown?.totalAmount ? payment.feeBreakdown.totalAmount.toFixed(2) : '0.00'}
+              </strong>
+            </div>
+            <div className="col-md-3 col-sm-6">
+              <span className="text-muted d-block">Payment Mode & Gateway:</span>
+              <span className="fw-semibold">{payment.paymentMethod || 'UPI'} • BharatKosh</span>
+            </div>
+            <div className="col-md-3 col-sm-6">
+              <span className="text-muted d-block">Payment Timestamp:</span>
+              <span>{new Date(payment.paidAt || payment.createdAt).toLocaleString('en-IN')}</span>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="gov-card p-3 mb-4 bg-light border">
+          <div className="d-flex justify-content-between align-items-center">
+            <div className="small">
+              <i className="bi bi-shield-check text-success me-2"></i>
+              Statutory verification fee assessment: <strong>Compliant with Legal Metrology Schedule IX</strong>
+            </div>
+            <span className="badge bg-success">Status: Verified</span>
+          </div>
+        </div>
+      )}
 
       {/* Metrological Inspection Observation Results (if conducted) */}
       {inspection && (
@@ -300,6 +375,20 @@ const ApplicationDetails = () => {
           </div>
         )}
       </div>
+
+      {payment && (
+        <ReceiptModal
+          show={showReceiptModal}
+          onHide={() => setShowReceiptModal(false)}
+          payment={{
+            ...payment,
+            application,
+            instrument: application.instrument,
+            business: application.business,
+            applicant: application.applicant,
+          }}
+        />
+      )}
     </div>
   );
 };

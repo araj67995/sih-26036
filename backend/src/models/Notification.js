@@ -8,6 +8,11 @@ const notificationSchema = new mongoose.Schema(
       required: [true, 'Notification must target a recipient user'],
       index: true,
     },
+    recipient: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      index: true,
+    },
     title: {
       type: String,
       required: true,
@@ -29,10 +34,20 @@ const notificationSchema = new mongoose.Schema(
         'APPLICATION_REJECTED',
         'CERTIFICATE_ISSUED',
         'CERTIFICATE_EXPIRING',
+        'PAYMENT',
+        'PAYMENT_COMPLETED',
         'SYSTEM',
       ],
       default: 'SYSTEM',
       index: true,
+    },
+    relatedEntity: {
+      entityType: {
+        type: String,
+      },
+      entityId: {
+        type: mongoose.Schema.Types.ObjectId,
+      },
     },
     isRead: {
       type: Boolean,
@@ -44,6 +59,17 @@ const notificationSchema = new mongoose.Schema(
     timestamps: true,
   }
 );
+
+// Synchronize user and recipient so both are populated regardless of which one was provided
+notificationSchema.pre('validate', function (next) {
+  if (!this.user && this.recipient) {
+    this.user = this.recipient;
+  }
+  if (!this.recipient && this.user) {
+    this.recipient = this.user;
+  }
+  next();
+});
 
 // Compound index for querying user unread notifications efficiently
 notificationSchema.index({ user: 1, isRead: 1, createdAt: -1 });

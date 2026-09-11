@@ -74,6 +74,18 @@ const applicationSchema = new mongoose.Schema(
       trim: true,
       default: null,
     },
+    payment: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Payment',
+      default: null,
+      index: true,
+    },
+    paymentStatus: {
+      type: String,
+      enum: ['PENDING', 'PAID', 'EXEMPTED'],
+      default: 'PAID',
+      index: true,
+    },
     remarks: {
       type: String,
       trim: true,

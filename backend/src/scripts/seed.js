@@ -17,8 +17,10 @@ const {
   Notification,
   AuditLog,
   TestCentre,
+  Payment,
 } = require('../models');
-const { generateCertificatePDF } = require('../services/pdfService');
+const { generateCertificatePDF, generateReceiptPDF } = require('../services/pdfService');
+const { calculateMachineFee } = require('../utils/feeCalculator');
 
 async function seedDatabase() {
   console.log('====================================================');
@@ -40,6 +42,7 @@ async function seedDatabase() {
       Notification.deleteMany({}),
       AuditLog.deleteMany({}),
       TestCentre.deleteMany({}),
+      Payment.deleteMany({}),
     ]);
     console.log('    [OK] Collections cleared.');
 
@@ -338,6 +341,71 @@ async function seedDatabase() {
     });
 
     console.log('    [OK] Applications created across SUBMITTED, DOCUMENT_VERIFICATION, INSPECTION_SCHEDULED, and CERTIFICATE_ISSUED.');
+
+    // 5b. CREATE STATUTORY PAYMENTS AND GENERATE PDF RECEIPTS ACCORDING TO MACHINE
+    console.log('--> Processing Statutory Fee Payments & Generating Official PDF Receipts...');
+    const seedApps = [app1, app2, app3, app4, app5, app6];
+    const seedMethods = ['UPI', 'NET_BANKING', 'UPI', 'BHARATKOSH_CHALLAN', 'DEBIT_CARD', 'UPI'];
+
+    for (let i = 0; i < seedApps.length; i++) {
+      const app = seedApps[i];
+      const inst = instruments.find((ins) => ins._id.toString() === app.instrument.toString());
+      const biz = businesses.find((b) => b._id.toString() === app.business.toString());
+      const usr = users.find((u) => u._id.toString() === app.applicant.toString());
+
+      const feeBreakdown = calculateMachineFee(inst, app.applicationType);
+      const receiptNumber = `RCP-2026-${10001 + i}`;
+      const transactionId = `TXN-2026-${80000000 + i * 1423}`;
+      const paidAt = new Date(app.submittedAt);
+      const paymentMethod = seedMethods[i] || 'UPI';
+
+      const receiptPdfUrl = await generateReceiptPDF({
+        receiptNumber,
+        transactionId,
+        applicationNumber: app.applicationNumber,
+        applicationType: app.applicationType,
+        businessName: biz.businessName,
+        businessAddress: `${biz.address}, ${biz.district}, ${biz.state} - ${biz.pincode}`,
+        applicantName: usr.name,
+        applicantPhone: usr.phone,
+        applicantEmail: usr.email,
+        gstNumber: biz.gstNumber,
+        instrumentType: inst.instrumentType,
+        manufacturer: inst.manufacturer,
+        model: inst.model,
+        serialNumber: inst.serialNumber,
+        capacity: inst.capacity,
+        unit: inst.unit,
+        location: inst.location,
+        feeBreakdown,
+        paymentMethod,
+        paidAt,
+        clientUrl: 'http://localhost:5173',
+      });
+
+      const payment = await Payment.create({
+        receiptNumber,
+        transactionId,
+        application: app._id,
+        applicant: usr._id,
+        business: biz._id,
+        instrument: inst._id,
+        applicationType: app.applicationType,
+        feeBreakdown,
+        currency: 'INR',
+        paymentMethod,
+        paymentGateway: 'BharatKosh / Legal Metrology Instant Settlement',
+        status: 'PAID',
+        paidAt,
+        receiptPdfUrl,
+        remarks: 'Statutory verification fee settled via BharatKosh portal',
+      });
+
+      app.payment = payment._id;
+      app.paymentStatus = 'PAID';
+      await app.save();
+    }
+    console.log(`    [OK] Generated ${seedApps.length} official PDF receipts and payment records.`);
 
     // 6. CREATE SAMPLE INSPECTION RECORDS
     console.log('--> Creating Inspection Observations with automatic error calculations...');

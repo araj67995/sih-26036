@@ -1,4 +1,4 @@
-const { Application, Document, Inspection, Certificate, Instrument, User } = require('../models');
+const { Application, Document, Inspection, Certificate, Instrument, User, Notification } = require('../models');
 const ApiResponse = require('../utils/apiResponse');
 const { logAction } = require('../services/auditService');
 const { generateCertificatePDF } = require('../services/pdfService');
@@ -91,10 +91,33 @@ const reviewApplication = async (req, res, next) => {
       application.status = 'APPROVED_FOR_INSPECTION';
       application.remarks = remarks || 'Documents verified and approved for physical inspection.';
       application.rejectionReason = null;
+      await Document.updateMany(
+        { application: application._id },
+        { verificationStatus: 'APPROVED' }
+      );
     } else if (action === 'REJECT') {
       application.status = 'DOCUMENT_REJECTED';
       application.rejectionReason = rejectionReason || 'Documents do not satisfy metrological requirements';
       application.remarks = remarks || '';
+      await Document.updateMany(
+        { application: application._id },
+        { verificationStatus: 'REJECTED' }
+      );
+      if (application.instrument) {
+        await Instrument.findByIdAndUpdate(application.instrument, { status: 'REJECTED' });
+      }
+      try {
+        await Notification.create({
+          user: application.applicant,
+          recipient: application.applicant,
+          title: 'Application Rejected - Document Verification Failed',
+          message: `Application ${application.applicationNumber} was rejected by Officer ${req.user.name}. Reason: ${application.rejectionReason}`,
+          type: 'DOCUMENT_REJECTED',
+          relatedEntity: { entityType: 'Application', entityId: application._id },
+        });
+      } catch (notifErr) {
+        console.warn('Notification warning:', notifErr.message);
+      }
     } else {
       return ApiResponse.error(res, "Action must be either 'APPROVE' or 'REJECT'", 400);
     }
@@ -247,6 +270,12 @@ const approveApplication = async (req, res, next) => {
     // Update Instrument status
     await Instrument.findByIdAndUpdate(application.instrument._id, { status: 'VERIFIED' });
 
+    // Ensure all attached verification documents are marked APPROVED
+    await Document.updateMany(
+      { application: application._id },
+      { verificationStatus: 'APPROVED' }
+    );
+
     // Record Audit Log
     await logAction({
       user: req.user._id,
@@ -289,7 +318,15 @@ const rejectApplication = async (req, res, next) => {
     await application.save();
 
     // Update Instrument status to REJECTED
-    await Instrument.findByIdAndUpdate(application.instrument, { status: 'REJECTED' });
+    if (application.instrument) {
+      await Instrument.findByIdAndUpdate(application.instrument, { status: 'REJECTED' });
+    }
+
+    // Mark documents as REJECTED
+    await Document.updateMany(
+      { application: application._id },
+      { verificationStatus: 'REJECTED' }
+    );
 
     await logAction({
       user: req.user._id,
@@ -300,6 +337,19 @@ const rejectApplication = async (req, res, next) => {
       newStatus: 'REJECTED',
       description: `Application rejected by ${req.user.name}. Reason: ${application.rejectionReason}`,
     });
+
+    try {
+      await Notification.create({
+        user: application.applicant,
+        recipient: application.applicant,
+        title: 'Verification Application Rejected',
+        message: `Application ${application.applicationNumber} has been rejected by Officer ${req.user.name}. Reason: ${application.rejectionReason}`,
+        type: 'APPLICATION_REJECTED',
+        relatedEntity: { entityType: 'Application', entityId: application._id },
+      });
+    } catch (notifErr) {
+      console.warn('Notification warning:', notifErr.message);
+    }
 
     return ApiResponse.success(res, application, 'Application marked as REJECTED');
   } catch (error) {
@@ -350,6 +400,79 @@ const getOfficerStats = async (req, res, next) => {
   }
 };
 
+/**
+ * @desc   Update individual document verification status
+ * @route  PUT /api/officer/documents/:id/status
+ * @access Private (Officer / Admin)
+ */
+const updateDocumentStatus = async (req, res, next) => {
+  try {
+    const { status, reason } = req.body;
+    if (!['PENDING', 'APPROVED', 'REJECTED'].includes(status)) {
+      return ApiResponse.error(res, "Status must be 'PENDING', 'APPROVED', or 'REJECTED'", 400);
+    }
+
+    const doc = await Document.findById(req.params.id);
+    if (!doc) {
+      return ApiResponse.error(res, 'Document not found', 404);
+    }
+
+    doc.verificationStatus = status;
+    await doc.save();
+
+    // If any document is rejected, immediately reject the application
+    if (status === 'REJECTED') {
+      const application = await Application.findById(doc.application);
+      if (application) {
+        const prevStatus = application.status;
+        application.status = 'DOCUMENT_REJECTED';
+        application.rejectionReason = reason || `Attached document '${doc.fileName}' (${doc.documentType}) was rejected during verification.`;
+        await application.save();
+
+        if (application.instrument) {
+          await Instrument.findByIdAndUpdate(application.instrument, { status: 'REJECTED' });
+        }
+
+        await logAction({
+          user: req.user._id,
+          action: 'DOCUMENT_REJECTED',
+          entityType: 'Application',
+          entityId: application._id,
+          previousStatus: prevStatus,
+          newStatus: 'DOCUMENT_REJECTED',
+          description: `Application moved to DOCUMENT_REJECTED because document '${doc.fileName}' was rejected by ${req.user.name}`,
+        });
+
+        try {
+          await Notification.create({
+            user: application.applicant,
+            recipient: application.applicant,
+            title: 'Document Rejected - Application On Hold',
+            message: `Document '${doc.fileName}' was rejected. Application ${application.applicationNumber} is rejected. Reason: ${application.rejectionReason}`,
+            type: 'DOCUMENT_REJECTED',
+            relatedEntity: { entityType: 'Application', entityId: application._id },
+          });
+        } catch (notifErr) {
+          console.warn('Notification warning:', notifErr.message);
+        }
+      }
+    }
+
+    await logAction({
+      user: req.user._id,
+      action: status === 'APPROVED' ? 'DOCUMENT_APPROVED' : 'DOCUMENT_REJECTED',
+      entityType: 'Document',
+      entityId: doc._id,
+      newStatus: status,
+      description: `Officer ${req.user.name} marked document ${doc.fileName} as ${status}`,
+    });
+
+    return ApiResponse.success(res, doc, `Document marked as ${status}`);
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getAssignedApplications,
   getOfficerApplicationById,
@@ -358,4 +481,5 @@ module.exports = {
   approveApplication,
   rejectApplication,
   getOfficerStats,
+  updateDocumentStatus,
 };
