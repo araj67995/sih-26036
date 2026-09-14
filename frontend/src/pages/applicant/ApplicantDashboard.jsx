@@ -47,7 +47,7 @@ const ApplicantDashboard = () => {
           </h3>
           <p className="text-muted small mb-0">
             <i className="bi bi-building me-1"></i>
-            {user?.business?.businessName || 'Commercial Establishment'} • Legal Metrology Portal
+            {user?.business?.businessName || 'Commercial Establishment'} • Metro Verify
           </p>
         </div>
         <div className="d-flex gap-2 mt-2 mt-sm-0">

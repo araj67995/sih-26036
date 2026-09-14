@@ -4,6 +4,7 @@ import api, { getFileDownloadUrl } from '../../services/api';
 import StatusBadge from '../../components/StatusBadge';
 import TimelineTracker from '../../components/TimelineTracker';
 import ReceiptModal from '../../components/ReceiptModal';
+import LocationPickerMap from '../../components/LocationPickerMap';
 
 const ApplicationDetails = () => {
   const { id } = useParams();
@@ -11,6 +12,7 @@ const ApplicationDetails = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showReceiptModal, setShowReceiptModal] = useState(false);
+  const [showLocationMap, setShowLocationMap] = useState(false);
 
   useEffect(() => {
     const fetchDetails = async () => {
@@ -107,7 +109,7 @@ const ApplicationDetails = () => {
         />
       </div>
 
-      {/* Instrument & Business Summary Cards */}
+      {/* Instrument, Business & Verification Location Cards */}
       <div className="row g-4 mb-4">
         <div className="col-md-6">
           <div className="gov-card p-4 h-100">
@@ -133,47 +135,183 @@ const ApplicationDetails = () => {
                 {application.instrument?.capacity} {application.instrument?.unit}
               </div>
 
-              <div className="col-5 text-muted">Location:</div>
-              <div className="col-7">{application.instrument?.location}</div>
+              <div className="col-5 text-muted">Applicant Business:</div>
+              <div className="col-7 fw-semibold">{application.business?.businessName}</div>
+
+              <div className="col-5 text-muted">Jurisdiction:</div>
+              <div className="col-7">
+                {application.business?.district}, {application.business?.state}
+              </div>
             </div>
           </div>
         </div>
 
         <div className="col-md-6">
           <div className="gov-card p-4 h-100">
-            <h6 className="fw-bold text-navy border-bottom pb-2 mb-3">
-              <i className="bi bi-person-badge text-primary me-2"></i>
-              Officer & Establishment Allocation
-            </h6>
+            <div className="d-flex justify-content-between align-items-center border-bottom pb-2 mb-3">
+              <h6 className="fw-bold text-navy mb-0">
+                <i className="bi bi-person-badge text-primary me-2"></i>
+                Legal Metrology Officer Allocation
+              </h6>
+              {application.allocationStatus && (
+                <span
+                  className={`badge ${
+                    application.allocationStatus === 'ALLOCATED'
+                      ? 'bg-success'
+                      : application.allocationStatus === 'WAITING_FOR_ALLOCATION'
+                      ? 'bg-warning text-dark'
+                      : 'bg-secondary'
+                  }`}
+                >
+                  {application.allocationStatus}
+                </span>
+              )}
+            </div>
+
             <div className="row g-2 small">
               <div className="col-5 text-muted">Assigned Officer:</div>
               <div className="col-7 fw-semibold text-primary">
                 {application.assignedOfficer?.name ? (
                   <>
-                    <i className="bi bi-shield-check me-1"></i>
+                    <i className="bi bi-shield-check me-1 text-success"></i>
                     {application.assignedOfficer.name}
                   </>
                 ) : (
-                  <span className="text-muted fst-italic">Pending Allocation by Admin</span>
+                  <span className="text-warning fst-italic">
+                    <i className="bi bi-clock-history me-1"></i> Waiting for Allocation
+                  </span>
                 )}
               </div>
 
               <div className="col-5 text-muted">Officer Contact:</div>
               <div className="col-7">{application.assignedOfficer?.email || '-'}</div>
 
-              <div className="col-5 text-muted">Inspection Date:</div>
-              <div className="col-7 fw-bold">
-                {application.inspectionDate ? new Date(application.inspectionDate).toLocaleDateString() : 'Not scheduled yet'}
+              {application.assignedOfficerProfile?.officeName && (
+                <>
+                  <div className="col-5 text-muted">Departmental Office:</div>
+                  <div className="col-7">{application.assignedOfficerProfile.officeName}</div>
+                </>
+              )}
+
+              <div className="col-5 text-muted">Allocation Method:</div>
+              <div className="col-7">
+                <span className="badge bg-light text-dark border">
+                  {application.allocationMethod === 'AUTO_NEAREST'
+                    ? '⚡ Auto-Allocated (Nearest Inspector)'
+                    : application.allocationMethod === 'MANUAL'
+                    ? 'Manual Assignment'
+                    : 'System Default'}
+                </span>
               </div>
 
-              <div className="col-5 text-muted">Applicant Business:</div>
-              <div className="col-7">{application.business?.businessName}</div>
+              {application.allocationDistance != null && (
+                <>
+                  <div className="col-5 text-muted">Spatial Distance:</div>
+                  <div className="col-7 fw-bold text-success font-monospace">
+                    <i className="bi bi-cursor-fill me-1"></i>
+                    {application.allocationDistance >= 1000
+                      ? `${(application.allocationDistance / 1000).toFixed(2)} km away`
+                      : `${Math.round(application.allocationDistance)} meters away`}
+                  </div>
+                </>
+              )}
 
-              <div className="col-5 text-muted">District / State:</div>
-              <div className="col-7">
-                {application.business?.district}, {application.business?.state}
+              <div className="col-5 text-muted">Scheduled Date:</div>
+              <div className="col-7 fw-bold">
+                {application.inspectionDate
+                  ? new Date(application.inspectionDate).toLocaleDateString()
+                  : 'Pending Scheduling'}
               </div>
             </div>
+          </div>
+        </div>
+
+        {/* Dedicated Physical Verification Location Card */}
+        <div className="col-12">
+          <div className="gov-card p-4 border-start border-4 border-info">
+            <div className="d-flex flex-wrap justify-content-between align-items-center border-bottom pb-2 mb-3">
+              <div>
+                <h6 className="fw-bold text-navy mb-0">
+                  <i className="bi bi-geo-alt-fill text-danger me-2"></i>
+                  Physical Verification Address & On-Site Location
+                </h6>
+                <small className="text-muted">
+                  Physical premises where the weighing/measuring instrument is installed for calibration inspection
+                </small>
+              </div>
+              <div className="d-flex align-items-center gap-2 mt-2 mt-sm-0">
+                {application.verificationLocation?.location?.coordinates && (
+                  <button
+                    type="button"
+                    className="btn btn-outline-primary btn-sm"
+                    onClick={() => setShowLocationMap(!showLocationMap)}
+                  >
+                    <i className={`bi bi-${showLocationMap ? 'eye-slash' : 'map'} me-1`}></i>
+                    {showLocationMap ? 'Hide Map' : 'View on Map'}
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="row g-3 small">
+              <div className="col-md-6">
+                <span className="text-muted d-block">Premises / Machine Location:</span>
+                <strong className="text-dark">
+                  {application.verificationLocation?.address?.premisesDescription ||
+                    application.instrument?.premisesDescription ||
+                    'Installed Premises'}
+                </strong>
+                <div className="text-muted mt-1">
+                  {[
+                    application.verificationLocation?.address?.buildingName,
+                    application.verificationLocation?.address?.street,
+                    application.verificationLocation?.address?.area,
+                    application.verificationLocation?.address?.landmark
+                      ? `Near ${application.verificationLocation.address.landmark}`
+                      : '',
+                    application.verificationLocation?.address?.city,
+                    application.verificationLocation?.address?.district,
+                    application.verificationLocation?.address?.state,
+                    application.verificationLocation?.address?.pincode,
+                  ]
+                    .filter(Boolean)
+                    .join(', ') || 'Address coordinates recorded'}
+                </div>
+              </div>
+
+              <div className="col-md-6">
+                <span className="text-muted d-block">Geocoded Coordinates (GeoJSON Point):</span>
+                {application.verificationLocation?.location?.coordinates ? (
+                  <div className="font-monospace text-primary fw-semibold mt-1">
+                    <i className="bi bi-pin-map-fill text-danger me-1"></i>
+                    Latitude: {Number(application.verificationLocation.location.coordinates[1]).toFixed(6)}° N, Longitude:{' '}
+                    {Number(application.verificationLocation.location.coordinates[0]).toFixed(6)}° E
+                  </div>
+                ) : (
+                  <span className="badge bg-warning-subtle text-warning-emphasis">Coordinates pending</span>
+                )}
+                <div className="text-muted mt-2" style={{ fontSize: '0.78rem' }}>
+                  <i className="bi bi-shield-lock me-1"></i>
+                  Stored as MongoDB 2dsphere point for accurate nearest-officer distance queries.
+                </div>
+              </div>
+            </div>
+
+            {/* Map Preview */}
+            {showLocationMap && application.verificationLocation?.location?.coordinates && (
+              <div className="mt-4 pt-3 border-top">
+                <LocationPickerMap
+                  latitude={application.verificationLocation.location.coordinates[1]}
+                  longitude={application.verificationLocation.location.coordinates[0]}
+                  isConfirmed={true}
+                  label={`Application ${application.applicationNumber}`}
+                  addressPreview={
+                    application.verificationLocation?.address?.buildingName ||
+                    application.verificationLocation?.address?.premisesDescription
+                  }
+                />
+              </div>
+            )}
           </div>
         </div>
       </div>

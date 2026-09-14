@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import api, { getFileDownloadUrl } from '../../services/api';
 import ReceiptModal from '../../components/ReceiptModal';
+import VerificationAddressForm from '../../components/VerificationAddressForm';
+import LocationPickerMap from '../../components/LocationPickerMap';
 
 // Frontend fee calculation helper matching Legal Metrology statutory rules
 const calculateStatutoryFee = (instrument, applicationType = 'INITIAL') => {
@@ -116,6 +118,26 @@ const NewApplication = () => {
   const [selectedFile, setSelectedFile] = useState(null);
   const [documentType, setDocumentType] = useState('INVOICE');
 
+  // Inline address configuration state (if selected instrument lacks coordinates)
+  const [showAddressEditor, setShowAddressEditor] = useState(false);
+  const [addressFormData, setAddressFormData] = useState({
+    premisesDescription: '',
+    addressLine1: '',
+    addressLine2: '',
+    locality: '',
+    landmark: '',
+    city: '',
+    district: '',
+    state: 'Delhi',
+    pincode: '',
+    country: 'India',
+    latitude: null,
+    longitude: null,
+    isLocationConfirmed: false,
+  });
+  const [savingLocation, setSavingLocation] = useState(false);
+  const [showMapPreview, setShowMapPreview] = useState(false);
+
   // Success result state
   const [submissionResult, setSubmissionResult] = useState(null);
   const [showReceiptModal, setShowReceiptModal] = useState(false);
@@ -155,16 +177,191 @@ const NewApplication = () => {
   // Find currently selected instrument object
   const selectedInstrument = instruments.find((i) => i._id === formData.instrumentId);
 
+  // Auto-populate addressFormData whenever selected instrument changes
+  useEffect(() => {
+    if (selectedInstrument) {
+      const vAddr = selectedInstrument.verificationAddress || {};
+      const coords = selectedInstrument.location?.coordinates || [];
+      const hasCoords = coords.length === 2 && !(coords[0] === 0 && coords[1] === 0);
+
+      setAddressFormData({
+        premisesDescription: selectedInstrument.premisesDescription || '',
+        addressLine1: vAddr.addressLine1 || '',
+        addressLine2: vAddr.addressLine2 || '',
+        locality: vAddr.locality || '',
+        landmark: vAddr.landmark || '',
+        city: vAddr.city || '',
+        district: vAddr.district || '',
+        state: vAddr.state || 'Delhi',
+        pincode: vAddr.pincode || '',
+        country: vAddr.country || 'India',
+        latitude: hasCoords ? coords[1] : null,
+        longitude: hasCoords ? coords[0] : null,
+        isLocationConfirmed: selectedInstrument.isLocationConfirmed || hasCoords,
+      });
+    }
+  }, [selectedInstrument?._id]);
+
+  // Check if selected instrument has valid geo coordinates
+  const hasValidCoordinates = Boolean(
+    selectedInstrument?.location?.coordinates &&
+    selectedInstrument.location.coordinates.length === 2 &&
+    !(selectedInstrument.location.coordinates[0] === 0 && selectedInstrument.location.coordinates[1] === 0)
+  );
+
+  const instLng = hasValidCoordinates ? selectedInstrument.location.coordinates[0] : null;
+  const instLat = hasValidCoordinates ? selectedInstrument.location.coordinates[1] : null;
+
   // Compute real-time statutory fee based on machine
   const feeEstimate = calculateStatutoryFee(selectedInstrument, formData.applicationType);
 
+  // Handle saving inline address to instrument
+  const handleSaveInlineLocation = async () => {
+    try {
+      setSavingLocation(true);
+      setError('');
+
+      let lat = addressFormData.latitude;
+      let lng = addressFormData.longitude;
+
+      // If user hasn't explicitly clicked "Locate" on map, auto-geocode now
+      if (!lat || !lng) {
+        if (!addressFormData.district && !addressFormData.city && !addressFormData.pincode) {
+          setError('Please provide city, district, and pincode to locate this premises.');
+          setSavingLocation(false);
+          return;
+        }
+
+        const geoRes = await api.post('/geocoding/geocode', {
+          addressLine1: addressFormData.addressLine1,
+          addressLine2: addressFormData.addressLine2,
+          locality: addressFormData.locality,
+          landmark: addressFormData.landmark,
+          city: addressFormData.city,
+          district: addressFormData.district,
+          state: addressFormData.state,
+          country: addressFormData.country || 'India',
+          pincode: addressFormData.pincode,
+        });
+
+        if (geoRes.success && geoRes.data?.latitude && geoRes.data?.longitude) {
+          lat = geoRes.data.latitude;
+          lng = geoRes.data.longitude;
+          setAddressFormData((prev) => ({
+            ...prev,
+            latitude: lat,
+            longitude: lng,
+            isLocationConfirmed: true,
+          }));
+        } else {
+          setError(geoRes.message || 'Could not locate address coordinates. Please check PIN code.');
+          setSavingLocation(false);
+          return;
+        }
+      }
+
+      const res = await api.put(`/instruments/${selectedInstrument._id}/location`, {
+        premisesDescription: addressFormData.premisesDescription || 'Verification Premises',
+        verificationAddress: {
+          addressLine1: addressFormData.addressLine1,
+          addressLine2: addressFormData.addressLine2,
+          locality: addressFormData.locality,
+          landmark: addressFormData.landmark,
+          city: addressFormData.city,
+          district: addressFormData.district,
+          state: addressFormData.state,
+          pincode: addressFormData.pincode,
+          country: addressFormData.country || 'India',
+        },
+        coordinates: [Number(lng), Number(lat)],
+        location: {
+          type: 'Point',
+          coordinates: [Number(lng), Number(lat)],
+        },
+        isLocationConfirmed: true,
+        useBusinessAddress: false,
+      });
+
+      if (res.success) {
+        setInstruments((prev) =>
+          prev.map((i) => (i._id === selectedInstrument._id ? res.data : i))
+        );
+        setShowAddressEditor(false);
+      }
+    } catch (err) {
+      setError(err.message || 'Failed to update instrument location');
+    } finally {
+      setSavingLocation(false);
+    }
+  };
+
   // Proceed from Step 1 to Step 2
-  const handleProceedToPayment = (e) => {
+  const handleProceedToPayment = async (e) => {
     e.preventDefault();
     if (!formData.instrumentId) {
       setError('Please select an instrument to verify');
       return;
     }
+
+    if (!hasValidCoordinates) {
+      // Auto-geocode fallback on proceed if address fields exist
+      const addr = selectedInstrument?.verificationAddress || addressFormData;
+      if (addr && (addr.district || addr.city || addr.pincode)) {
+        try {
+          setLoading(true);
+          const geoRes = await api.post('/geocoding/geocode', {
+            addressLine1: addr.addressLine1,
+            locality: addr.locality,
+            city: addr.city,
+            district: addr.district,
+            state: addr.state,
+            pincode: addr.pincode,
+          });
+
+          if (geoRes.success && geoRes.data?.latitude && geoRes.data?.longitude) {
+            const updateRes = await api.put(`/instruments/${selectedInstrument._id}/location`, {
+              verificationAddress: {
+                addressLine1: addr.addressLine1,
+                addressLine2: addr.addressLine2 || '',
+                locality: addr.locality || '',
+                landmark: addr.landmark || '',
+                city: addr.city || '',
+                district: addr.district || '',
+                state: addr.state || '',
+                pincode: addr.pincode || '',
+                country: addr.country || 'India',
+              },
+              coordinates: [geoRes.data.longitude, geoRes.data.latitude],
+              location: {
+                type: 'Point',
+                coordinates: [geoRes.data.longitude, geoRes.data.latitude],
+              },
+              isLocationConfirmed: true,
+              useBusinessAddress: false,
+            });
+
+            if (updateRes.success) {
+              setInstruments((prev) =>
+                prev.map((i) => (i._id === selectedInstrument._id ? updateRes.data : i))
+              );
+              setError('');
+              setStep(2);
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+              return;
+            }
+          }
+        } catch (autoErr) {
+          console.warn('Auto geocode on proceed attempt error:', autoErr);
+        } finally {
+          setLoading(false);
+        }
+      }
+
+      setError('A verified physical address and geocoded location are required for this machine before proceeding.');
+      setShowAddressEditor(true);
+      return;
+    }
+
     setError('');
     setStep(2);
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -396,6 +593,132 @@ const NewApplication = () => {
                       </div>
                     )}
 
+                    {/* VERIFICATION LOCATION & GEOCODING CARD */}
+                    {selectedInstrument && (
+                      hasValidCoordinates ? (
+                        <div className="p-3 mb-4 rounded border bg-white shadow-sm">
+                          <div className="d-flex justify-content-between align-items-center mb-2">
+                            <h6 className="fw-bold text-navy mb-0">
+                              <i className="bi bi-geo-alt-fill text-danger me-2"></i>
+                              Verification Premises & Coordinates
+                            </h6>
+                            <span className="badge bg-success-subtle text-success border border-success fw-semibold">
+                              <i className="bi bi-check-circle-fill me-1"></i> Geocoded & Verified
+                            </span>
+                          </div>
+                          <div className="row g-2 small mb-2">
+                            <div className="col-md-3 text-muted">Premises / Spot:</div>
+                            <div className="col-md-9 fw-semibold text-dark">
+                              {selectedInstrument.premisesDescription || 'Standard Premises'}
+                            </div>
+
+                            <div className="col-md-3 text-muted">Verification Address:</div>
+                            <div className="col-md-9">
+                              {[
+                                selectedInstrument.verificationAddress?.addressLine1,
+                                selectedInstrument.verificationAddress?.addressLine2,
+                                selectedInstrument.verificationAddress?.locality,
+                                selectedInstrument.verificationAddress?.city,
+                                selectedInstrument.verificationAddress?.district,
+                                selectedInstrument.verificationAddress?.state,
+                                selectedInstrument.verificationAddress?.pincode,
+                              ].filter(Boolean).join(', ') || 'Address on record'}
+                            </div>
+
+                            <div className="col-md-3 text-muted">Geocoded Coordinates:</div>
+                            <div className="col-md-9 font-monospace text-primary fw-semibold">
+                              <i className="bi bi-crosshair me-1"></i>
+                              Lat: {instLat?.toFixed(6)}, Lng: {instLng?.toFixed(6)}
+                            </div>
+                          </div>
+
+                          <div className="d-flex justify-content-between align-items-center mt-2 pt-2 border-top">
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-outline-secondary"
+                              onClick={() => setShowMapPreview(!showMapPreview)}
+                            >
+                              <i className={`bi bi-${showMapPreview ? 'eye-slash' : 'map'} me-1`}></i>
+                              {showMapPreview ? 'Hide Map Preview' : 'Show Location on Map'}
+                            </button>
+                            <small className="text-muted">
+                              <i className="bi bi-shield-check text-success me-1"></i>
+                              Nearest Legal Metrology Officer will be auto-assigned within jurisdiction.
+                            </small>
+                          </div>
+
+                          {showMapPreview && instLat && instLng && (
+                            <div className="mt-3">
+                              <LocationPickerMap
+                                latitude={instLat}
+                                longitude={instLng}
+                                isConfirmed={true}
+                                label={selectedInstrument.model}
+                                addressPreview={selectedInstrument.verificationAddress?.addressLine1 || selectedInstrument.premisesDescription}
+                              />
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="alert alert-warning p-3 rounded border mb-4">
+                          <div className="d-flex align-items-start justify-content-between">
+                            <div>
+                              <h6 className="fw-bold text-dark mb-1">
+                                <i className="bi bi-exclamation-triangle-fill text-warning me-2"></i>
+                                Physical Verification Address & Coordinates Required
+                              </h6>
+                              <p className="small text-muted mb-0">
+                                This instrument has no confirmed geocoded location. An accurate location is mandatory for statutory inspection dispatch and automatic nearest-officer allocation.
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-warning fw-bold text-dark text-nowrap ms-3"
+                              onClick={() => setShowAddressEditor(!showAddressEditor)}
+                            >
+                              <i className={`bi bi-${showAddressEditor ? 'dash' : 'plus'}-circle me-1`}></i>
+                              {showAddressEditor ? 'Close Form' : 'Configure Address'}
+                            </button>
+                          </div>
+
+                          {showAddressEditor && (
+                            <div className="mt-3 pt-3 border-top bg-white p-3 rounded">
+                              <div className="mb-3">
+                                <label className="form-label small fw-semibold">Premises / Machine Spot Description</label>
+                                <input
+                                  type="text"
+                                  className="form-control form-control-sm"
+                                  placeholder="e.g. Counter 1 (Billing) / Main Warehouse Weighbridge"
+                                  value={addressFormData.premisesDescription}
+                                  onChange={(e) => setAddressFormData({ ...addressFormData, premisesDescription: e.target.value })}
+                                />
+                              </div>
+
+                              <VerificationAddressForm
+                                address={addressFormData}
+                                onChange={(updated) => setAddressFormData(updated)}
+                                onLocationConfirmed={(lat, lng, updated) => setAddressFormData(updated)}
+                                isConfirmed={addressFormData.isLocationConfirmed}
+                                title="Configure Verification Address"
+                                description="Enter physical premises address & locate on map to enable automatic officer allocation"
+                              />
+
+                              <div className="text-end mt-2">
+                                <button
+                                  type="button"
+                                  className="btn btn-success btn-sm fw-bold"
+                                  disabled={savingLocation || !addressFormData.isLocationConfirmed}
+                                  onClick={handleSaveInlineLocation}
+                                >
+                                  {savingLocation ? 'Saving Location...' : 'Save & Confirm Location'}
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    )}
+
                     {/* Application Classification */}
                     <div className="mb-4">
                       <label className="form-label fw-semibold">
@@ -581,6 +904,34 @@ const NewApplication = () => {
                             <span className="badge bg-light text-dark border">{formData.applicationType}</span>
                           </div>
                         </div>
+                      </div>
+
+                      {/* Verification Premises & Geocoded Location in Step 2 */}
+                      <div className="bg-light p-3 rounded border mb-3">
+                        <h6 className="fw-bold text-navy border-bottom pb-2 mb-2">
+                          <i className="bi bi-geo-alt-fill text-danger me-2"></i>
+                          Verification Premises Location
+                        </h6>
+                        <div className="small text-dark mb-1">
+                          <strong>{selectedInstrument?.premisesDescription || 'Verification Premises'}</strong>
+                        </div>
+                        <div className="small text-muted mb-2">
+                          {[
+                            selectedInstrument?.verificationAddress?.addressLine1,
+                            selectedInstrument?.verificationAddress?.addressLine2,
+                            selectedInstrument?.verificationAddress?.locality,
+                            selectedInstrument?.verificationAddress?.city,
+                            selectedInstrument?.verificationAddress?.district,
+                            selectedInstrument?.verificationAddress?.state,
+                            selectedInstrument?.verificationAddress?.pincode,
+                          ].filter(Boolean).join(', ')}
+                        </div>
+                        {instLat && instLng && (
+                          <div className="font-monospace text-primary small">
+                            <i className="bi bi-crosshair me-1"></i>
+                            Coordinates: {instLat.toFixed(6)}, {instLng.toFixed(6)}
+                          </div>
+                        )}
                       </div>
 
                       {/* Fee Breakdown Table */}
@@ -804,6 +1155,49 @@ const NewApplication = () => {
                       >
                         <i className="bi bi-timeline me-1"></i> Track Verification Lifecycle
                       </Link>
+                    </div>
+                  </div>
+
+                  {/* Automatic Officer Allocation Result Card */}
+                  <div className="gov-card p-3 p-md-4 mb-4 border-start border-4 border-primary">
+                    <div className="d-flex flex-wrap justify-content-between align-items-center">
+                      <div>
+                        <span className="badge bg-primary mb-1">
+                          <i className="bi bi-geo-alt-fill me-1"></i>
+                          {submissionResult.application?.allocationMethod === 'AUTO_NEAREST'
+                            ? 'Automated Nearest-Officer Allocation'
+                            : 'Officer Allocation'}
+                        </span>
+                        <h6 className="fw-bold text-navy mb-1">
+                          {submissionResult.application?.assignedOfficer ? (
+                            <>
+                              Assigned Legal Metrology Officer:{' '}
+                              <span className="text-primary">{submissionResult.application.assignedOfficer.name}</span>
+                            </>
+                          ) : (
+                            <span className="text-warning">Allocation In Progress / Awaiting Dispatch</span>
+                          )}
+                        </h6>
+                        <p className="text-muted small mb-0">
+                          {submissionResult.application?.assignedOfficer ? (
+                            <>
+                              Office Contact: {submissionResult.application.assignedOfficer.email} • Distance:{' '}
+                              <strong className="text-dark">
+                                {submissionResult.application.allocationDistance
+                                  ? `${(submissionResult.application.allocationDistance / 1000).toFixed(1)} km away`
+                                  : 'Within Local Jurisdiction'}
+                              </strong>
+                            </>
+                          ) : (
+                            'Application registered and queued for nearest officer assignment based on your geocoded premises.'
+                          )}
+                        </p>
+                      </div>
+                      <div className="mt-2 mt-md-0">
+                        <span className="badge bg-success-subtle text-success border border-success px-3 py-2">
+                          <i className="bi bi-check-all me-1"></i> Status: {submissionResult.application?.allocationStatus || 'ALLOCATED'}
+                        </span>
+                      </div>
                     </div>
                   </div>
 

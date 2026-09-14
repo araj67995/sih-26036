@@ -94,7 +94,7 @@ const Login = () => {
             <div className="gov-card p-4 p-md-5">
               <div className="text-center mb-4">
                 <div className="gov-emblem mb-2">⚖️</div>
-                <h3 className="fw-bold text-navy mb-1">National Metrology Portal</h3>
+                <h3 className="fw-bold text-navy mb-1">Metro Verify</h3>
                 <p className="text-muted small">Sign in to your authorized departmental or applicant workspace</p>
               </div>
 

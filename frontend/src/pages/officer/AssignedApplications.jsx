@@ -26,12 +26,20 @@ const AssignedApplications = () => {
 
   const [processing, setProcessing] = useState(false);
   const [statusFilter, setStatusFilter] = useState('');
+  const [districtFilter, setDistrictFilter] = useState('');
+  const [maxDistanceFilter, setMaxDistanceFilter] = useState('');
   const [alert, setAlert] = useState(null);
 
   const fetchApplications = async () => {
     try {
       setLoading(true);
-      const url = statusFilter ? `/officer/applications?status=${statusFilter}` : '/officer/applications';
+      const params = new URLSearchParams();
+      if (statusFilter) params.append('status', statusFilter);
+      if (districtFilter) params.append('district', districtFilter);
+      if (maxDistanceFilter) params.append('maxDistance', maxDistanceFilter);
+
+      const qs = params.toString();
+      const url = qs ? `/officer/applications?${qs}` : '/officer/applications';
       const res = await api.get(url);
       if (res.success) {
         setApplications(res.data);
@@ -45,7 +53,7 @@ const AssignedApplications = () => {
 
   useEffect(() => {
     fetchApplications();
-  }, [statusFilter]);
+  }, [statusFilter, districtFilter, maxDistanceFilter]);
 
   const fetchDocsForApp = async (appId) => {
     try {
@@ -196,26 +204,76 @@ const AssignedApplications = () => {
       )}
 
       {/* Filter Toolbar */}
-      <div className="bg-white p-3 rounded border mb-4 d-flex flex-wrap gap-3 align-items-center justify-content-between">
-        <div className="d-flex align-items-center gap-2">
-          <label className="small text-muted fw-bold">Filter By Stage:</label>
-          <select
-            className="form-select form-select-sm"
-            style={{ width: '220px' }}
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-          >
-            <option value="">All Verification Stages</option>
-            <option value="SUBMITTED">Submitted (New)</option>
-            <option value="DOCUMENT_VERIFICATION">Under Document Scrutiny</option>
-            <option value="APPROVED_FOR_INSPECTION">Approved For Inspection</option>
-            <option value="INSPECTION_SCHEDULED">Inspection Scheduled</option>
-            <option value="INSPECTION_COMPLETED">Inspection Completed</option>
-            <option value="CERTIFICATE_ISSUED">Certificate Issued</option>
-            <option value="REJECTED">Rejected</option>
-          </select>
+      <div className="bg-white p-3 rounded border mb-4">
+        <div className="row g-2 align-items-center">
+          <div className="col-md-4 col-sm-6">
+            <label className="small text-muted fw-bold d-block mb-1">Filter By Stage:</label>
+            <select
+              className="form-select form-select-sm"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+            >
+              <option value="">All Verification Stages</option>
+              <option value="SUBMITTED">Submitted (New)</option>
+              <option value="DOCUMENT_VERIFICATION">Under Document Scrutiny</option>
+              <option value="APPROVED_FOR_INSPECTION">Approved For Inspection</option>
+              <option value="INSPECTION_SCHEDULED">Inspection Scheduled</option>
+              <option value="INSPECTION_COMPLETED">Inspection Completed</option>
+              <option value="CERTIFICATE_ISSUED">Certificate Issued</option>
+              <option value="REJECTED">Rejected</option>
+            </select>
+          </div>
+
+          <div className="col-md-3 col-sm-6">
+            <label className="small text-muted fw-bold d-block mb-1">Filter By District:</label>
+            <input
+              type="text"
+              className="form-control form-control-sm"
+              placeholder="e.g. Central Delhi"
+              value={districtFilter}
+              onChange={(e) => setDistrictFilter(e.target.value)}
+            />
+          </div>
+
+          <div className="col-md-3 col-sm-6">
+            <label className="small text-muted fw-bold d-block mb-1">Max Distance Radius:</label>
+            <select
+              className="form-select form-select-sm"
+              value={maxDistanceFilter}
+              onChange={(e) => setMaxDistanceFilter(e.target.value)}
+            >
+              <option value="">All Jurisdictional Distances</option>
+              <option value="10">Within 10 km</option>
+              <option value="25">Within 25 km</option>
+              <option value="50">Within 50 km</option>
+              <option value="100">Within 100 km</option>
+            </select>
+          </div>
+
+          <div className="col-md-2 col-sm-6 d-flex align-items-end justify-content-end">
+            {(statusFilter || districtFilter || maxDistanceFilter) && (
+              <button
+                type="button"
+                className="btn btn-outline-secondary btn-sm w-100"
+                onClick={() => {
+                  setStatusFilter('');
+                  setDistrictFilter('');
+                  setMaxDistanceFilter('');
+                }}
+              >
+                <i className="bi bi-x-circle me-1"></i> Reset Filters
+              </button>
+            )}
+          </div>
         </div>
-        <span className="small text-muted font-monospace">Showing {applications.length} Applications</span>
+
+        <div className="d-flex justify-content-between align-items-center mt-2 pt-2 border-top">
+          <small className="text-muted">
+            <i className="bi bi-geo-alt text-danger me-1"></i>
+            Applications ordered by submission with real-time geospatial distance tracking.
+          </small>
+          <span className="small text-muted font-monospace">Showing {applications.length} Cases</span>
+        </div>
       </div>
 
       <div className="gov-card p-4">
@@ -227,7 +285,7 @@ const AssignedApplications = () => {
         ) : applications.length === 0 ? (
           <div className="text-center py-5 text-muted">
             <i className="bi bi-folder2-open display-6 d-block mb-2"></i>
-            No applications found matching the selected stage.
+            No applications found matching the selected filters.
           </div>
         ) : (
           <div className="table-responsive">
@@ -237,6 +295,7 @@ const AssignedApplications = () => {
                   <th>Application Number</th>
                   <th>Establishment & Applicant</th>
                   <th>Instrument Details</th>
+                  <th>Verification Location & Distance</th>
                   <th>Status</th>
                   <th>Inspection Date</th>
                   <th>Action Controls</th>
@@ -257,6 +316,28 @@ const AssignedApplications = () => {
                       <small className="font-monospace text-muted">
                         SN: {app.instrument?.serialNumber} • {app.instrument?.capacity} {app.instrument?.unit}
                       </small>
+                    </td>
+                    <td>
+                      {app.allocationDistance != null ? (
+                        <div>
+                          <span className="badge bg-primary-subtle text-primary border border-primary-subtle fw-semibold font-monospace">
+                            <i className="bi bi-pin-map-fill text-danger me-1"></i>
+                            {app.allocationDistance >= 1000
+                              ? `${(app.allocationDistance / 1000).toFixed(1)} km away`
+                              : `${Math.round(app.allocationDistance)} m away`}
+                          </span>
+                          <div className="small text-muted text-truncate mt-1" style={{ maxWidth: '180px', fontSize: '0.75rem' }}>
+                            {app.verificationLocation?.address?.city || app.verificationLocation?.address?.district || app.business?.district || 'Premises'}
+                          </div>
+                        </div>
+                      ) : (
+                        <div>
+                          <span className="badge bg-light text-dark border">Jurisdiction Area</span>
+                          <div className="small text-muted text-truncate mt-1" style={{ maxWidth: '180px', fontSize: '0.75rem' }}>
+                            {app.verificationLocation?.address?.district || app.business?.district || '-'}
+                          </div>
+                        </div>
+                      )}
                     </td>
                     <td>
                       <StatusBadge status={app.status} />

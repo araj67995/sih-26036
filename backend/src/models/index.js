@@ -9,9 +9,11 @@ const Notification = require('./Notification');
 const AuditLog = require('./AuditLog');
 const TestCentre = require('./TestCentre');
 const Payment = require('./Payment');
+const Officer = require('./Officer');
 
 module.exports = {
   User,
+  Officer,
   Business,
   Instrument,
   Application,

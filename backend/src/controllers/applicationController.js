@@ -3,6 +3,13 @@ const ApiResponse = require('../utils/apiResponse');
 const { logAction } = require('../services/auditService');
 const { calculateMachineFee } = require('../utils/feeCalculator');
 const { generateReceiptPDF } = require('../services/pdfService');
+const geocodingService = require('../services/geocodingService');
+const {
+  allocateNearestOfficer,
+  reassignOfficerManually,
+  getEligibleOfficersForApplication,
+  formatDistance,
+} = require('../services/officerAllocationService');
 
 /**
  * Generate readable unique application number e.g. APP-2026-10482
@@ -14,13 +21,21 @@ const generateAppNumber = () => {
 };
 
 /**
- * @desc   Create and submit a new verification application
+ * @desc   Create and submit a new verification application with automatic nearest officer allocation
  * @route  POST /api/applications
  * @access Private (Applicant)
  */
 const createApplication = async (req, res, next) => {
   try {
-    const { instrumentId, applicationType, remarks, paymentMethod, payFee } = req.body;
+    const {
+      instrumentId,
+      applicationType,
+      remarks,
+      paymentMethod,
+      payFee,
+      verificationAddress,
+      coordinates, // optional explicit [lng, lat]
+    } = req.body;
 
     const instrument = await Instrument.findById(instrumentId);
     if (!instrument) {
@@ -32,8 +47,110 @@ const createApplication = async (req, res, next) => {
       return ApiResponse.error(res, 'Business profile not found', 400);
     }
 
-    // Assign to an available officer automatically if available
-    const availableOfficer = await User.findOne({ role: 'officer', status: 'active' });
+    // Determine verification location snapshot
+    let locationSnapshot = null;
+    if (
+      coordinates &&
+      Array.isArray(coordinates) &&
+      coordinates.length === 2 &&
+      !(coordinates[0] === 0 && coordinates[1] === 0)
+    ) {
+      locationSnapshot = {
+        ...(verificationAddress || {}),
+        location: {
+          type: 'Point',
+          coordinates: [parseFloat(coordinates[0]), parseFloat(coordinates[1])],
+        },
+      };
+    } else if (
+      instrument.location?.coordinates &&
+      instrument.location.coordinates.length === 2 &&
+      !(instrument.location.coordinates[0] === 0 && instrument.location.coordinates[1] === 0)
+    ) {
+      locationSnapshot = {
+        ...(instrument.verificationAddress || {}),
+        location: {
+          type: 'Point',
+          coordinates: instrument.location.coordinates,
+        },
+      };
+    } else if (
+      business.location?.coordinates &&
+      business.location.coordinates.length === 2 &&
+      !(business.location.coordinates[0] === 0 && business.location.coordinates[1] === 0)
+    ) {
+      locationSnapshot = {
+        addressLine1: business.addressLine1 || business.address,
+        addressLine2: business.addressLine2,
+        locality: business.locality,
+        landmark: business.landmark,
+        city: business.city,
+        district: business.district,
+        state: business.state,
+        pincode: business.pincode,
+        country: business.country || 'India',
+        location: {
+          type: 'Point',
+          coordinates: business.location.coordinates,
+        },
+      };
+    } else if (
+      instrument.verificationAddress &&
+      (instrument.verificationAddress.district || instrument.verificationAddress.city || instrument.verificationAddress.pincode)
+    ) {
+      try {
+        const geo = await geocodingService.geocodeAddress(instrument.verificationAddress);
+        if (geo && geo.latitude && geo.longitude) {
+          locationSnapshot = {
+            ...(instrument.verificationAddress.toObject ? instrument.verificationAddress.toObject() : instrument.verificationAddress),
+            location: {
+              type: 'Point',
+              coordinates: [geo.longitude, geo.latitude],
+            },
+          };
+          instrument.location = {
+            type: 'Point',
+            coordinates: [geo.longitude, geo.latitude],
+          };
+          instrument.isLocationConfirmed = true;
+          await instrument.save();
+        }
+      } catch (gErr) {
+        console.warn('[CreateApplication] Geocode fallback warning:', gErr.message);
+      }
+    } else if (business.district || business.pincode) {
+      try {
+        const geo = await geocodingService.geocodeAddress({
+          addressLine1: business.addressLine1 || business.address,
+          locality: business.locality,
+          city: business.city,
+          district: business.district,
+          state: business.state,
+          pincode: business.pincode,
+        });
+        if (geo && geo.latitude && geo.longitude) {
+          locationSnapshot = {
+            addressLine1: business.addressLine1 || business.address,
+            district: business.district,
+            state: business.state,
+            pincode: business.pincode,
+            country: 'India',
+            location: {
+              type: 'Point',
+              coordinates: [geo.longitude, geo.latitude],
+            },
+          };
+          business.location = {
+            type: 'Point',
+            coordinates: [geo.longitude, geo.latitude],
+          };
+          business.isLocationConfirmed = true;
+          await business.save();
+        }
+      } catch (gErr) {
+        console.warn('[CreateApplication] Business geocode fallback warning:', gErr.message);
+      }
+    }
 
     let appNumber = generateAppNumber();
     // Ensure uniqueness
@@ -49,7 +166,9 @@ const createApplication = async (req, res, next) => {
       applicationType: applicationType || 'INITIAL',
       status: 'SUBMITTED',
       paymentStatus: 'PAID',
-      assignedOfficer: availableOfficer ? availableOfficer._id : null,
+      assignedOfficer: null,
+      verificationLocation: locationSnapshot,
+      allocationStatus: locationSnapshot?.location?.coordinates ? 'WAITING_FOR_ALLOCATION' : 'LOCATION_REQUIRED',
       submittedAt: new Date(),
       remarks: remarks || '',
     });
@@ -57,6 +176,13 @@ const createApplication = async (req, res, next) => {
     // Update instrument status to VERIFICATION_PENDING
     instrument.status = 'VERIFICATION_PENDING';
     await instrument.save();
+
+    // Trigger automatic nearest officer allocation
+    try {
+      await allocateNearestOfficer(application._id);
+    } catch (allocErr) {
+      console.warn('[Auto-Allocation during submission error]:', allocErr.message);
+    }
 
     // Generate statutory payment & official receipt according to machine
     let paymentRecord = null;
@@ -184,8 +310,9 @@ const getApplications = async (req, res, next) => {
     const applications = await Application.find(query)
       .populate('applicant', 'name email phone')
       .populate('business', 'businessName businessType district state')
-      .populate('instrument', 'instrumentType manufacturer model serialNumber capacity unit')
-      .populate('assignedOfficer', 'name email')
+      .populate('instrument', 'instrumentType manufacturer model serialNumber capacity unit location premisesDescription')
+      .populate('assignedOfficer', 'name email phone')
+      .populate('assignedOfficerProfile', 'officeName officeAddress district state serviceRadius availabilityStatus location')
       .populate('payment')
       .sort({ createdAt: -1 });
 
@@ -207,6 +334,7 @@ const getApplicationById = async (req, res, next) => {
       .populate('business')
       .populate('instrument')
       .populate('assignedOfficer', 'name email phone')
+      .populate('assignedOfficerProfile', 'officeName officeAddress district state serviceRadius availabilityStatus location')
       .populate('payment');
 
     if (!application) {
@@ -399,6 +527,111 @@ const getApplicantStats = async (req, res, next) => {
   }
 };
 
+/**
+ * @desc   Trigger automatic nearest officer allocation
+ * @route  POST /api/applications/:id/allocate
+ * @access Private (Admin / Officer / Applicant)
+ */
+const allocateApplication = async (req, res, next) => {
+  try {
+    const result = await allocateNearestOfficer(req.params.id);
+    return ApiResponse.success(res, result, result.message);
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc   Admin manually reassigns officer with mandatory reason
+ * @route  POST /api/applications/:id/reallocate
+ * @access Private (Admin)
+ */
+const reallocateApplication = async (req, res, next) => {
+  try {
+    const { officerId, reason } = req.body;
+    if (!officerId) {
+      return ApiResponse.error(res, 'Please select an officer for reassignment', 400);
+    }
+    if (!reason || reason.trim().length < 5) {
+      return ApiResponse.error(
+        res,
+        'A valid reason for manual officer reassignment is required (minimum 5 characters)',
+        400
+      );
+    }
+
+    const result = await reassignOfficerManually({
+      applicationId: req.params.id,
+      officerUserId: officerId,
+      reason,
+      adminUserId: req.user._id,
+    });
+
+    return ApiResponse.success(res, result, 'Officer successfully reassigned');
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc   Get allocation options and eligible officers with distances
+ * @route  GET /api/applications/:id/allocation
+ * @access Private
+ */
+const getApplicationAllocation = async (req, res, next) => {
+  try {
+    const data = await getEligibleOfficersForApplication(req.params.id);
+    return ApiResponse.success(res, data, 'Allocation options retrieved');
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc   Update application verification location and re-trigger allocation
+ * @route  PUT /api/applications/:id/location
+ * @access Private (Applicant / Admin)
+ */
+const updateApplicationLocation = async (req, res, next) => {
+  try {
+    const application = await Application.findById(req.params.id);
+    if (!application) {
+      return ApiResponse.error(res, 'Application not found', 404);
+    }
+
+    // Authorization check: only owner applicant or admin can modify
+    if (req.user.role === 'applicant' && application.applicant.toString() !== req.user._id.toString()) {
+      return ApiResponse.error(res, 'Not authorized to modify this application verification location', 403);
+    }
+
+    const { address, coordinates } = req.body;
+    if (!coordinates || !Array.isArray(coordinates) || coordinates.length !== 2) {
+      return ApiResponse.error(res, 'Valid coordinates [longitude, latitude] are required', 400);
+    }
+
+    application.verificationLocation = {
+      ...(address || {}),
+      location: {
+        type: 'Point',
+        coordinates: [parseFloat(coordinates[0]), parseFloat(coordinates[1])],
+      },
+    };
+    application.allocationStatus = 'WAITING_FOR_ALLOCATION';
+    await application.save();
+
+    // Trigger automatic nearest allocation with new location
+    const allocResult = await allocateNearestOfficer(application._id);
+
+    return ApiResponse.success(
+      res,
+      { application, allocation: allocResult },
+      'Verification location updated and officer allocation calculated'
+    );
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   createApplication,
   getApplications,
@@ -407,4 +640,8 @@ module.exports = {
   uploadDocument,
   getApplicationDocuments,
   getApplicantStats,
+  allocateApplication,
+  reallocateApplication,
+  getApplicationAllocation,
+  updateApplicationLocation,
 };

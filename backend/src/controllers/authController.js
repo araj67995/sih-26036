@@ -92,7 +92,7 @@ const register = async (req, res, next) => {
     return ApiResponse.success(
       res,
       { user: userData, token },
-      'Registration successful. Welcome to Legal Metrology Portal.',
+      'Registration successful. Welcome to Metro Verify.',
       201
     );
   } catch (error) {

@@ -20,6 +20,8 @@ const adminRoutes = require('./routes/adminRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const verifyRoutes = require('./routes/verifyRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
+const geocodingRoutes = require('./routes/geocodingRoutes');
+const officerLocationRoutes = require('./routes/officerLocationRoutes');
 
 const app = express();
 
@@ -104,6 +106,8 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/verify', verifyRoutes);
 app.use('/api/payments', paymentRoutes);
+app.use('/api/geocoding', geocodingRoutes);
+app.use('/api/officers', officerLocationRoutes);
 
 // Fallback for undefined routes & Centralized Error Handler
 app.use(notFound);

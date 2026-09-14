@@ -1,9 +1,14 @@
-const { User, Application, Certificate, Inspection, AuditLog, TestCentre, Business, Instrument } = require('../models');
+const { User, Application, Certificate, Inspection, AuditLog, TestCentre, Business, Instrument, Officer } = require('../models');
 const ApiResponse = require('../utils/apiResponse');
 const { logAction } = require('../services/auditService');
+const {
+  reassignOfficerManually,
+  getEligibleOfficersForApplication,
+  formatDistance,
+} = require('../services/officerAllocationService');
 
 /**
- * @desc   Admin dashboard metrics and summary statistics
+ * @desc   Admin dashboard metrics and summary statistics including geospatial allocation metrics
  * @route  GET /api/admin/dashboard
  * @access Private (Admin)
  */
@@ -29,12 +34,74 @@ const getAdminDashboardStats = async (req, res, next) => {
       validUntil: { $gte: new Date(), $lte: thirtyDaysFromNow },
     });
 
+    // Allocation Specific Metrics (SIH Step 15)
+    const autoAllocatedCount = await Application.countDocuments({ allocationMethod: 'AUTO_NEAREST' });
+    const manualAllocatedCount = await Application.countDocuments({ allocationMethod: 'MANUAL' });
+    const waitingAllocationCount = await Application.countDocuments({ allocationStatus: 'WAITING_FOR_ALLOCATION' });
+    const locationRequiredCount = await Application.countDocuments({ allocationStatus: 'LOCATION_REQUIRED' });
+
+    // Average Allocation Distance
+    const avgDistanceAgg = await Application.aggregate([
+      { $match: { allocationDistance: { $ne: null, $gt: 0 } } },
+      { $group: { _id: null, avgDistance: { $avg: '$allocationDistance' } } },
+    ]);
+    const avgAllocationDistanceMeters = avgDistanceAgg[0]?.avgDistance || 0;
+    const avgAllocationDistanceFormatted = formatDistance(Math.round(avgAllocationDistanceMeters));
+
+    // Applications by District
+    const districtBreakdown = await Application.aggregate([
+      {
+        $group: {
+          _id: {
+            $ifNull: ['$verificationLocation.district', 'Unspecified District'],
+          },
+          count: { $sum: 1 },
+        },
+      },
+      { $sort: { count: -1 } },
+      { $limit: 8 },
+    ]);
+
+    // Officer Allocation Distribution
+    const officerDistribution = await Application.aggregate([
+      { $match: { assignedOfficer: { $ne: null } } },
+      {
+        $group: {
+          _id: '$assignedOfficer',
+          count: { $sum: 1 },
+        },
+      },
+      {
+        $lookup: {
+          from: 'users',
+          localField: '_id',
+          foreignField: '_id',
+          as: 'officerUser',
+        },
+      },
+      { $unwind: '$officerUser' },
+      {
+        $project: {
+          officerName: '$officerUser.name',
+          count: 1,
+        },
+      },
+      { $sort: { count: -1 } },
+    ]);
+
     // Monthly applications distribution (last 6 months) for Recharts
     const statusBreakdown = [
       { name: 'Pending Review', count: pendingApplications, color: '#f59e0b' },
       { name: 'Approved / Certified', count: approvedApplications, color: '#10b981' },
       { name: 'Rejected', count: rejectedApplications, color: '#ef4444' },
       { name: 'Valid Certificates', count: certificatesIssued, color: '#3b82f6' },
+    ];
+
+    const allocationBreakdown = [
+      { name: 'Auto Allocated', count: autoAllocatedCount, color: '#10b981' },
+      { name: 'Manual Override', count: manualAllocatedCount, color: '#6366f1' },
+      { name: 'Waiting Allocation', count: waitingAllocationCount, color: '#f59e0b' },
+      { name: 'Location Required', count: locationRequiredCount, color: '#ef4444' },
     ];
 
     return ApiResponse.success(
@@ -49,6 +116,19 @@ const getAdminDashboardStats = async (req, res, next) => {
         certificatesIssued,
         expiringCertificates,
         statusBreakdown,
+        // Allocation Stats
+        allocationStats: {
+          totalApplications,
+          autoAllocated: autoAllocatedCount,
+          manualAllocated: manualAllocatedCount,
+          waitingAllocation: waitingAllocationCount,
+          locationRequired: locationRequiredCount,
+          avgAllocationDistanceMeters,
+          avgAllocationDistanceFormatted,
+          allocationBreakdown,
+          districtBreakdown: districtBreakdown.map((d) => ({ district: d._id, count: d.count })),
+          officerDistribution,
+        },
       },
       'Admin dashboard statistics loaded'
     );
@@ -120,8 +200,9 @@ const getAllApplications = async (req, res, next) => {
     const applications = await Application.find(query)
       .populate('applicant', 'name email phone')
       .populate('business', 'businessName district state')
-      .populate('instrument', 'instrumentType manufacturer model serialNumber')
+      .populate('instrument', 'instrumentType manufacturer model serialNumber location premisesDescription')
       .populate('assignedOfficer', 'name email phone')
+      .populate('assignedOfficerProfile', 'officeName officeAddress district state serviceRadius availabilityStatus')
       .sort({ createdAt: -1 });
 
     return ApiResponse.success(res, applications, 'All applications retrieved');
@@ -137,32 +218,17 @@ const getAllApplications = async (req, res, next) => {
  */
 const assignOfficerToApplication = async (req, res, next) => {
   try {
-    const { officerId, remarks } = req.body;
-    const application = await Application.findById(req.params.id);
+    const { officerId, remarks, reason } = req.body;
+    const reassignmentReason = reason || remarks || 'Assigned by State Administrator for statutory verification';
 
-    if (!application) {
-      return ApiResponse.error(res, 'Application not found', 404);
-    }
-
-    const officer = await User.findOne({ _id: officerId, role: 'officer' });
-    if (!officer) {
-      return ApiResponse.error(res, 'Specified officer was not found or is not an active officer', 400);
-    }
-
-    const previousOfficer = application.assignedOfficer;
-    application.assignedOfficer = officer._id;
-    if (remarks) application.remarks = remarks;
-    await application.save();
-
-    await logAction({
-      user: req.user._id,
-      action: 'OFFICER_ASSIGNED',
-      entityType: 'Application',
-      entityId: application._id,
-      description: `Admin assigned application ${application.applicationNumber} to Officer ${officer.name}`,
+    const result = await reassignOfficerManually({
+      applicationId: req.params.id,
+      officerUserId: officerId,
+      reason: reassignmentReason,
+      adminUserId: req.user._id,
     });
 
-    return ApiResponse.success(res, application, `Application assigned to Officer ${officer.name}`);
+    return ApiResponse.success(res, result.application, `Application assigned to Officer ${result.officer.name}`);
   } catch (error) {
     next(error);
   }

@@ -42,7 +42,7 @@ const Navbar = () => {
           <Link to="/" className="gov-brand">
             <div className="gov-emblem">⚖️</div>
             <div>
-              <h1 className="gov-brand-title">Legal Metrology Portal</h1>
+              <h1 className="gov-brand-title">Metro Verify</h1>
               <p className="gov-brand-sub">Verification of Weighing & Measuring Instruments</p>
             </div>
           </Link>

@@ -47,6 +47,8 @@ const AdminDashboard = () => {
   }
 
   const chartData = stats?.statusBreakdown || [];
+  const allocationBreakdownData = stats?.allocationStats?.allocationBreakdown || [];
+  const districtBreakdown = stats?.allocationStats?.districtBreakdown || [];
 
   return (
     <div className="admin-dashboard">
@@ -64,6 +66,68 @@ const AdminDashboard = () => {
           <Link to="/admin/audit-logs" className="btn btn-gov-primary btn-sm">
             <i className="bi bi-journal-text me-1"></i> Audit Trail
           </Link>
+        </div>
+      </div>
+
+      {/* Geospatial Allocation & Nearest-Officer Engine KPIs */}
+      <div className="gov-card p-3 mb-4 bg-light-subtle border-primary-subtle">
+        <div className="d-flex justify-content-between align-items-center mb-2">
+          <h6 className="fw-bold text-navy mb-0">
+            <i className="bi bi-geo-alt-fill text-danger me-2"></i>
+            Geospatial Nearest-Officer Allocation Engine Metrics
+          </h6>
+          <span className="badge bg-primary font-monospace">MongoDB $geoNear Active</span>
+        </div>
+        <div className="row g-3">
+          <div className="col-lg-3 col-sm-6">
+            <div className="p-3 bg-white rounded border border-success-subtle shadow-sm">
+              <small className="text-muted text-uppercase fw-semibold" style={{ fontSize: '0.75rem' }}>
+                Auto-Allocated (Nearest)
+              </small>
+              <div className="d-flex align-items-baseline justify-content-between mt-1">
+                <h3 className="fw-bold text-success mb-0">{stats?.allocationStats?.autoAllocated || 0}</h3>
+                <span className="badge bg-success-subtle text-success">⚡ Automated</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="col-lg-3 col-sm-6">
+            <div className="p-3 bg-white rounded border border-primary-subtle shadow-sm">
+              <small className="text-muted text-uppercase fw-semibold" style={{ fontSize: '0.75rem' }}>
+                Admin Manual Overrides
+              </small>
+              <div className="d-flex align-items-baseline justify-content-between mt-1">
+                <h3 className="fw-bold text-primary mb-0">{stats?.allocationStats?.manualAllocated || 0}</h3>
+                <span className="badge bg-primary-subtle text-primary">Audit Logged</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="col-lg-3 col-sm-6">
+            <div className="p-3 bg-white rounded border border-warning-subtle shadow-sm">
+              <small className="text-muted text-uppercase fw-semibold" style={{ fontSize: '0.75rem' }}>
+                Awaiting Officer Pickup
+              </small>
+              <div className="d-flex align-items-baseline justify-content-between mt-1">
+                <h3 className="fw-bold text-warning mb-0">{stats?.allocationStats?.waitingAllocation || 0}</h3>
+                <span className="badge bg-warning-subtle text-warning">In Queue</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="col-lg-3 col-sm-6">
+            <div className="p-3 bg-white rounded border border-info-subtle shadow-sm">
+              <small className="text-muted text-uppercase fw-semibold" style={{ fontSize: '0.75rem' }}>
+                Avg Allocation Distance
+              </small>
+              <div className="d-flex align-items-baseline justify-content-between mt-1">
+                <h3 className="fw-bold text-navy mb-0">
+                  {stats?.allocationStats?.avgAllocationDistanceFormatted || '0 km'}
+                </h3>
+                <span className="badge bg-info-subtle text-info">Spatial Radius</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -183,6 +247,72 @@ const AdminDashboard = () => {
               <i className="bi bi-shield-lock-fill text-success fs-5 d-block mb-1"></i>
               System Operating Normally on <strong>MongoDB</strong>
             </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Geospatial Distribution & Efficiency Analytics */}
+      <div className="row g-4 mb-4">
+        <div className="col-lg-6">
+          <div className="gov-card p-4 h-100">
+            <h5 className="fw-bold text-navy mb-3">
+              <i className="bi bi-pie-chart-fill text-primary me-2"></i>
+              Allocation Engine Method Breakdown
+            </h5>
+            <div style={{ width: '100%', height: 260 }}>
+              <ResponsiveContainer>
+                <BarChart data={allocationBreakdownData} margin={{ top: 10, right: 20, left: -10, bottom: 20 }}>
+                  <XAxis dataKey="name" tick={{ fontSize: 12 }} />
+                  <YAxis allowDecimals={false} />
+                  <Tooltip />
+                  <Bar dataKey="count" radius={[4, 4, 0, 0]}>
+                    {allocationBreakdownData.map((entry, index) => (
+                      <Cell key={`alloc-cell-${index}`} fill={entry.color || '#3b82f6'} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+            <small className="text-muted text-center d-block">
+              Ratio of automated nearest-officer matches vs administrative manual overrides
+            </small>
+          </div>
+        </div>
+
+        <div className="col-lg-6">
+          <div className="gov-card p-4 h-100">
+            <h5 className="fw-bold text-navy mb-3">
+              <i className="bi bi-geo-fill text-danger me-2"></i>
+              Top Districts by Verification Volume
+            </h5>
+            {districtBreakdown.length === 0 ? (
+              <div className="text-muted text-center py-4 small">No district volume data recorded yet</div>
+            ) : (
+              <div className="d-flex flex-column gap-3">
+                {districtBreakdown.slice(0, 5).map((d, i) => (
+                  <div key={i} className="border-bottom pb-2">
+                    <div className="d-flex justify-content-between align-items-center mb-1">
+                      <span className="fw-semibold text-navy small">
+                        <i className="bi bi-building me-1 text-muted"></i>
+                        {d.district}
+                      </span>
+                      <span className="badge bg-primary-subtle text-primary font-monospace">
+                        {d.count} Applications
+                      </span>
+                    </div>
+                    <div className="progress" style={{ height: '6px' }}>
+                      <div
+                        className="progress-bar bg-primary"
+                        role="progressbar"
+                        style={{
+                          width: `${Math.min(100, Math.round((d.count / (stats?.totalApplications || 1)) * 100))}%`,
+                        }}
+                      ></div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>

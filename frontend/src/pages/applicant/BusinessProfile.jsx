@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import api from '../../services/api';
+import VerificationAddressForm from '../../components/VerificationAddressForm';
 
 const BusinessProfile = () => {
   const [business, setBusiness] = useState(null);
@@ -115,54 +116,46 @@ const BusinessProfile = () => {
                 </div>
               </div>
 
-              <div className="mb-3">
-                <label className="form-label">Establishment Address *</label>
-                <input
-                  type="text"
-                  name="address"
-                  className="form-control"
-                  value={business?.address || ''}
-                  onChange={handleChange}
-                  required
-                />
-              </div>
-
-              <div className="row g-3 mb-4">
-                <div className="col-md-4">
-                  <label className="form-label">District *</label>
-                  <input
-                    type="text"
-                    name="district"
-                    className="form-control"
-                    value={business?.district || ''}
-                    onChange={handleChange}
-                    required
-                  />
-                </div>
-                <div className="col-md-4">
-                  <label className="form-label">State *</label>
-                  <input
-                    type="text"
-                    name="state"
-                    className="form-control"
-                    value={business?.state || ''}
-                    onChange={handleChange}
-                    required
-                  />
-                </div>
-                <div className="col-md-4">
-                  <label className="form-label">Pincode *</label>
-                  <input
-                    type="text"
-                    name="pincode"
-                    className="form-control"
-                    value={business?.pincode || ''}
-                    onChange={handleChange}
-                    maxLength="6"
-                    required
-                  />
-                </div>
-              </div>
+              {/* Structured Verification Location Section with Geocoding & Map */}
+              <VerificationAddressForm
+                address={{
+                  addressLine1: business?.addressLine1 || business?.address || '',
+                  addressLine2: business?.addressLine2 || '',
+                  locality: business?.locality || '',
+                  landmark: business?.landmark || '',
+                  city: business?.city || '',
+                  district: business?.district || '',
+                  state: business?.state || '',
+                  pincode: business?.pincode || '',
+                  country: business?.country || 'India',
+                  latitude: business?.location?.coordinates ? business.location.coordinates[1] : null,
+                  longitude: business?.location?.coordinates ? business.location.coordinates[0] : null,
+                  isLocationConfirmed: business?.isLocationConfirmed || false,
+                }}
+                onChange={(newAddr) => {
+                  setBusiness((prev) => ({
+                    ...prev,
+                    addressLine1: newAddr.addressLine1,
+                    addressLine2: newAddr.addressLine2,
+                    locality: newAddr.locality,
+                    landmark: newAddr.landmark,
+                    city: newAddr.city,
+                    district: newAddr.district,
+                    state: newAddr.state,
+                    pincode: newAddr.pincode,
+                    country: newAddr.country,
+                    isLocationConfirmed: newAddr.isLocationConfirmed,
+                    address: [newAddr.addressLine1, newAddr.locality, newAddr.city].filter(Boolean).join(', '),
+                    location:
+                      newAddr.longitude && newAddr.latitude
+                        ? { type: 'Point', coordinates: [newAddr.longitude, newAddr.latitude] }
+                        : prev.location,
+                  }));
+                }}
+                title="Business Premises Verification Location"
+                description="Official establishment address used as default inspection location for instruments"
+                isConfirmed={business?.isLocationConfirmed}
+              />
 
               <div className="row g-3 mb-4">
                 <div className="col-md-6">

@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import api from '../../services/api';
 import StatusBadge from '../../components/StatusBadge';
+import VerificationAddressForm from '../../components/VerificationAddressForm';
 
 const Instruments = () => {
   const [instruments, setInstruments] = useState([]);
+  const [business, setBusiness] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -17,25 +19,47 @@ const Instruments = () => {
     serialNumber: '',
     capacity: '',
     unit: 'kg',
-    location: 'Main Store Counter',
+    premisesDescription: 'Main Store Counter',
   });
 
-  const fetchInstruments = async () => {
+  const [useBusinessAddress, setUseBusinessAddress] = useState(true);
+  const [customAddress, setCustomAddress] = useState({
+    addressLine1: '',
+    addressLine2: '',
+    locality: '',
+    landmark: '',
+    city: '',
+    district: '',
+    state: '',
+    country: 'India',
+    pincode: '',
+    latitude: null,
+    longitude: null,
+    isLocationConfirmed: false,
+  });
+
+  const fetchData = async () => {
     try {
       setLoading(true);
-      const res = await api.get('/instruments');
-      if (res.success) {
-        setInstruments(res.data);
+      const [instRes, bizRes] = await Promise.all([
+        api.get('/instruments'),
+        api.get('/business'),
+      ]);
+      if (instRes.success) {
+        setInstruments(instRes.data);
+      }
+      if (bizRes.success) {
+        setBusiness(bizRes.data);
       }
     } catch (err) {
-      setError('Failed to fetch instruments');
+      setError('Failed to fetch instruments or business profile');
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchInstruments();
+    fetchData();
   }, []);
 
   const handleChange = (e) => {
@@ -48,14 +72,40 @@ const Instruments = () => {
     setError('');
     setSuccess('');
 
+    // If custom location is selected, ensure it has been confirmed or geocoded
+    if (!useBusinessAddress && (!customAddress.latitude || !customAddress.longitude)) {
+      setError('Please locate and confirm the instrument physical verification location on the map');
+      setSubmitting(false);
+      return;
+    }
+
     try {
-      const res = await api.post('/instruments', {
+      const payload = {
         ...formData,
         capacity: Number(formData.capacity),
-      });
+        useBusinessAddress,
+      };
+
+      if (!useBusinessAddress) {
+        payload.verificationAddress = {
+          addressLine1: customAddress.addressLine1,
+          addressLine2: customAddress.addressLine2,
+          locality: customAddress.locality,
+          landmark: customAddress.landmark,
+          city: customAddress.city,
+          district: customAddress.district,
+          state: customAddress.state,
+          country: customAddress.country || 'India',
+          pincode: customAddress.pincode,
+        };
+        payload.coordinates = [customAddress.longitude, customAddress.latitude]; // [lng, lat]
+        payload.isLocationConfirmed = customAddress.isLocationConfirmed;
+      }
+
+      const res = await api.post('/instruments', payload);
 
       if (res.success) {
-        setSuccess('Instrument registered successfully in MongoDB!');
+        setSuccess('Instrument registered successfully with verification location!');
         setShowModal(false);
         setFormData({
           instrumentType: 'Electronic Counter Scale',
@@ -64,9 +114,10 @@ const Instruments = () => {
           serialNumber: '',
           capacity: '',
           unit: 'kg',
-          location: 'Main Store Counter',
+          premisesDescription: 'Main Store Counter',
         });
-        fetchInstruments();
+        setUseBusinessAddress(true);
+        fetchData();
       }
     } catch (err) {
       setError(err.message || 'Failed to register instrument');
@@ -112,32 +163,53 @@ const Instruments = () => {
           <div className="table-responsive">
             <table className="table table-hover align-middle mb-0">
               <thead className="table-light">
-                <tr>
+                  <tr>
                   <th>Type</th>
-                  <th>Manufacturer</th>
-                  <th>Model</th>
+                  <th>Manufacturer / Model</th>
                   <th>Serial Number</th>
                   <th>Capacity</th>
-                  <th>Location</th>
+                  <th>Premises Spot</th>
+                  <th>Verification Location</th>
                   <th>Status</th>
                 </tr>
               </thead>
               <tbody>
-                {instruments.map((inst) => (
-                  <tr key={inst._id}>
-                    <td className="fw-semibold text-navy">{inst.instrumentType}</td>
-                    <td>{inst.manufacturer}</td>
-                    <td>{inst.model}</td>
-                    <td className="font-monospace text-primary fw-bold">{inst.serialNumber}</td>
-                    <td>
-                      {inst.capacity} {inst.unit}
-                    </td>
-                    <td className="small text-muted">{inst.location}</td>
-                    <td>
-                      <StatusBadge status={inst.status} />
-                    </td>
-                  </tr>
-                ))}
+                {instruments.map((inst) => {
+                  const hasCoords = inst.location?.coordinates && inst.location.coordinates.length === 2;
+                  const locDistrict = inst.verificationAddress?.district || inst.business?.district || 'Registered Premises';
+                  return (
+                    <tr key={inst._id}>
+                      <td className="fw-semibold text-navy">{inst.instrumentType}</td>
+                      <td>
+                        <div className="fw-bold text-dark">{inst.model}</div>
+                        <small className="text-muted">{inst.manufacturer}</small>
+                      </td>
+                      <td className="font-monospace text-primary fw-bold">{inst.serialNumber}</td>
+                      <td>
+                        {inst.capacity} {inst.unit}
+                      </td>
+                      <td className="small text-muted">{inst.premisesDescription || inst.location || '-'}</td>
+                      <td>
+                        <div className="d-flex align-items-center gap-1">
+                          <i className={`bi ${hasCoords ? 'bi-geo-alt-fill text-success' : 'bi-geo-alt text-warning'}`}></i>
+                          <span className="small fw-semibold">{locDistrict}</span>
+                        </div>
+                        {hasCoords ? (
+                          <div className="font-monospace text-muted" style={{ fontSize: '0.72rem' }}>
+                            {inst.location.coordinates[1].toFixed(4)}, {inst.location.coordinates[0].toFixed(4)}
+                          </div>
+                        ) : (
+                          <span className="badge bg-warning-subtle text-warning border" style={{ fontSize: '0.68rem' }}>
+                            No Coordinates
+                          </span>
+                        )}
+                      </td>
+                      <td>
+                        <StatusBadge status={inst.status} />
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -147,7 +219,7 @@ const Instruments = () => {
       {/* Add Instrument Modal */}
       {showModal && (
         <div className="modal show d-block" tabIndex="-1" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
-          <div className="modal-dialog modal-dialog-centered">
+          <div className="modal-dialog modal-dialog-centered modal-lg">
             <div className="modal-content">
               <div className="modal-header bg-light">
                 <h5 className="modal-title fw-bold text-navy">
@@ -158,7 +230,7 @@ const Instruments = () => {
               </div>
 
               <form onSubmit={handleCreateInstrument}>
-                <div className="modal-body">
+                <div className="modal-body" style={{ maxHeight: '75vh', overflowY: 'auto' }}>
                   <div className="mb-3">
                     <label className="form-label">Instrument Category / Type *</label>
                     <select
@@ -249,16 +321,72 @@ const Instruments = () => {
                   </div>
 
                   <div className="mb-3">
-                    <label className="form-label">Premises / Counter Location *</label>
+                    <label className="form-label">Premises Spot / Counter Description *</label>
                     <input
                       type="text"
-                      name="location"
+                      name="premisesDescription"
                       className="form-control"
-                      placeholder="e.g. Cashier Counter 1"
-                      value={formData.location}
+                      placeholder="e.g. Billing Counter 1 / Gate 2 Inbound Scale"
+                      value={formData.premisesDescription}
                       onChange={handleChange}
                       required
                     />
+                  </div>
+
+                  {/* Physical Verification Location Section */}
+                  <div className="p-3 border rounded bg-light mb-3">
+                    <div className="d-flex justify-content-between align-items-center mb-2">
+                      <h6 className="fw-bold text-navy mb-0">
+                        <i className="bi bi-geo-alt-fill text-danger me-2"></i>
+                        Physical Verification Location
+                      </h6>
+                      <div className="form-check form-switch mb-0">
+                        <input
+                          className="form-check-input"
+                          type="checkbox"
+                          id="useBusinessAddrSwitch"
+                          checked={useBusinessAddress}
+                          onChange={(e) => setUseBusinessAddress(e.target.checked)}
+                        />
+                        <label className="form-check-label small fw-bold" htmlFor="useBusinessAddrSwitch">
+                          Use Business Address
+                        </label>
+                      </div>
+                    </div>
+
+                    {useBusinessAddress ? (
+                      <div className="p-3 bg-white rounded border">
+                        <div className="d-flex align-items-center gap-2 mb-1">
+                          <span className="badge bg-primary-subtle text-primary border">
+                            <i className="bi bi-building me-1"></i> Inherited from Business Profile
+                          </span>
+                          {business?.location?.coordinates && (
+                            <span className="badge bg-success-subtle text-success border font-monospace">
+                              ✓ {business.location.coordinates[1].toFixed(4)}, {business.location.coordinates[0].toFixed(4)}
+                            </span>
+                          )}
+                        </div>
+                        <div className="small text-dark fw-semibold mt-1">
+                          {business?.businessName}
+                        </div>
+                        <div className="text-muted small">
+                          {[business?.addressLine1 || business?.address, business?.district, business?.state, business?.pincode]
+                            .filter(Boolean)
+                            .join(', ')}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="mt-3">
+                        <VerificationAddressForm
+                          address={customAddress}
+                          onChange={setCustomAddress}
+                          onLocationConfirmed={(lat, lng, updated) => setCustomAddress(updated)}
+                          title="Instrument Specific Verification Location"
+                          description="Specify distinct physical premises if this instrument is in use in a different city or branch"
+                          isConfirmed={customAddress.isLocationConfirmed}
+                        />
+                      </div>
+                    )}
                   </div>
                 </div>
 

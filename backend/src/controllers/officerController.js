@@ -21,11 +21,30 @@ const getAssignedApplications = async (req, res, next) => {
       query.status = req.query.status;
     }
 
+    if (req.query.district) {
+      query['verificationLocation.district'] = new RegExp(`^${req.query.district}$`, 'i');
+    }
+
+    if (req.query.maxDistance) {
+      const maxMeters = parseFloat(req.query.maxDistance) * 1000;
+      if (!isNaN(maxMeters)) {
+        query.allocationDistance = { $lte: maxMeters };
+      }
+    }
+
+    if (req.query.inspectionDate) {
+      const date = new Date(req.query.inspectionDate);
+      const startOfDay = new Date(date.setHours(0, 0, 0, 0));
+      const endOfDay = new Date(date.setHours(23, 59, 59, 999));
+      query.inspectionDate = { $gte: startOfDay, $lte: endOfDay };
+    }
+
     const applications = await Application.find(query)
       .populate('applicant', 'name email phone')
       .populate('business', 'businessName businessType address district state contactNumber')
-      .populate('instrument', 'instrumentType manufacturer model serialNumber capacity unit')
-      .populate('assignedOfficer', 'name email')
+      .populate('instrument', 'instrumentType manufacturer model serialNumber capacity unit location premisesDescription')
+      .populate('assignedOfficer', 'name email phone')
+      .populate('assignedOfficerProfile', 'officeName officeAddress district state serviceRadius availabilityStatus')
       .sort({ createdAt: -1 });
 
     return ApiResponse.success(res, applications, 'Assigned applications retrieved');

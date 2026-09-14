@@ -6,6 +6,7 @@ const {
   getInstrumentById,
   updateInstrument,
   deleteInstrument,
+  updateInstrumentLocation,
 } = require('../controllers/instrumentController');
 const { protect, authorize } = require('../middleware/authMiddleware');
 
@@ -15,6 +16,7 @@ router.get('/', getInstruments);
 router.post('/', authorize('applicant', 'admin'), registerInstrument);
 router.get('/:id', getInstrumentById);
 router.put('/:id', authorize('applicant', 'admin'), updateInstrument);
+router.put('/:id/location', authorize('applicant', 'admin'), updateInstrumentLocation);
 router.delete('/:id', authorize('applicant', 'admin'), deleteInstrument);
 
 module.exports = router;
